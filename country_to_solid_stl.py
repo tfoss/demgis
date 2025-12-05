@@ -223,48 +223,6 @@ def clip_dem_to_country(dem_path, ne_path, country_name):
     return clipped, out_transform, nodata
 
 
-# def smooth_mask_and_dem(clipped_dem, nodata):
-#     """Smooth the country mask strongly and the DEM lightly."""
-
-#     # Build binary mask of "inside country"
-#     mask_in = clipped_dem != nodata
-
-#     # Strongly smooth the mask to round borders
-#     mask_f = gaussian_filter(mask_in.astype(np.float32), sigma=MASK_SMOOTH_SIGMA_PIX)
-#     mask_smooth = mask_f > 0.5
-
-#     # Apply smoothed mask
-#     dem = clipped_dem.copy().astype(np.float32)
-#     dem[~mask_smooth] = np.nan
-
-#     # # Optional DEM smoothing (light)
-#     # if DEM_SMOOTH_SIGMA_PIX > 0:
-#     #     valid = np.isfinite(dem)
-#     #     dem_filled = np.where(valid, dem, 0.0)
-#     #     dem_blur = gaussian_filter(dem_filled, sigma=DEM_SMOOTH_SIGMA_PIX)
-#     #     w = gaussian_filter(valid.astype(np.float32), sigma=DEM_SMOOTH_SIGMA_PIX)
-#     #     with np.errstate(invalid="ignore", divide="ignore"):
-#     #         dem = np.where(w > 0, dem_blur / w, np.nan)
-
-#     # Optional DEM smoothing (light to strong, with blending)
-#     if DEM_SMOOTH_SIGMA_PIX > 0:
-#         raw = dem.copy()
-
-#         valid = np.isfinite(raw)
-#         dem_filled = np.where(valid, raw, 0.0)
-
-#         dem_blur = gaussian_filter(dem_filled, sigma=DEM_SMOOTH_SIGMA_PIX)
-#         w = gaussian_filter(valid.astype(np.float32), sigma=DEM_SMOOTH_SIGMA_PIX)
-
-#         with np.errstate(invalid="ignore", divide="ignore"):
-#             blurred = np.where(w > 0, dem_blur / w, np.nan)
-
-#         # Blend between original and blurred elevations
-#         dem = DEM_SMOOTH_BLEND * blurred + (1.0 - DEM_SMOOTH_BLEND) * raw
-
-#     return dem
-
-
 from scipy.ndimage import gaussian_filter
 import numpy as np
 
