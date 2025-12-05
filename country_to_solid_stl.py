@@ -443,26 +443,14 @@ def main():
     print(f"Clipping DEM to {args.country}...")
     clipped_dem, transform, nodata = clip_dem_to_country(args.dem, args.ne, args.country)
 
-    # print("Smoothing mask and DEM...")
-    # dem_smooth = smooth_mask_and_dem(clipped_dem, nodata)
-
-    # # print("Adding capital star (if defined)...")
-    # # dem_with_capital = add_capital_star(dem_smooth, transform, args.country)
-
-    # # # print("Building surface mesh...")
-    # # # surface = build_surface_mesh(dem_with_capital)
-
-    # print("Building surface mesh...")
-    # # Use coarser grid for Brazil to reduce triangle count
-    # if args.country == "Brazil":
-    #     local_step = 3   # try 2 or 3
-    # else:
-    #     local_step = XY_STEP
-
-    # surface = build_surface_mesh(dem_smooth, step=local_step)
-    
     print("Smoothing mask and DEM...")
     dem_smooth = smooth_mask_and_dem(clipped_dem, nodata)
+
+    # print("Adding capital star (if defined)...")
+    # dem_with_capital = add_capital_star(dem_smooth, transform, args.country)
+
+    # # print("Building surface mesh...")
+    # # surface = build_surface_mesh(dem_with_capital)
 
     print("Building surface mesh...")
     # Use coarser grid for Brazil to reduce triangle count
@@ -472,10 +460,9 @@ def main():
         local_step = XY_STEP
 
     surface = build_surface_mesh(dem_smooth, step=local_step)
-
-    # Capital position in mesh XY (mm), if known
+    
+    # Compute capital XY in mm (pre-scale, pre-mirror)
     capital_xy_mm = get_capital_xy_mm(transform, clipped_dem.shape, args.country, local_step)
-
 
     print("Solidifying...")
     solid = solidify_surface_mesh(surface, base_z_mm=0.0)  # bottom at Z=0, terrain above
