@@ -3,40 +3,145 @@ import numpy as np
 import rasterio
 from rasterio.mask import mask
 import geopandas as gpd
-from scipy.ndimage import gaussian_filter
 import trimesh
+from scipy.ndimage import gaussian_filter, label
+from rasterio.transform import rowcol
+import shapely.geometry as geom
+from shapely.geometry import Point, Polygon
+from shapely.ops import unary_union
+from shapely.geometry import box
+from shapely.affinity import scale, rotate
 
 # -----------------------------
 # Parameters you’ll re-use for all countries
 # -----------------------------
 GLOBAL_XY_SCALE = 0.33   # will be set after we calibrate using Brazil
+# Flip horizontally so STL matches the TIFF / map orientation
+MIRROR_X = True
 SEA_LEVEL_M      = 0.0    # mean sea level
 SEA_PADDING_M    = -50.0  # shallow "sea floor" below sea level for visual separation
 BASE_THICKNESS_MM       = 2.0      # solid thickness under terrain
 Z_SCALE_MM_PER_M        = 0.0020   # vertical exaggeration (mm of print per meter of elevation)
-# XY_STEP                  = 2       # decimation factor in X/Y (2 = keep every 2nd pixel)
-# XY_MM_PER_PIXEL          = 0.05     # size of one DEM pixel on the print (before XY_STEP)
-# MASK_SMOOTH_SIGMA_PIX    = 2.0     # how strongly to smooth border mask (higher = rounder outline)
-# DEM_SMOOTH_SIGMA_PIX     = 1.0     # light smoothing of elevation (0 to disable)
+MIN_COMPONENT_PIXELS = 2000   # drop isolated blobs smaller than this
 
-# NEW (smoother borders, more triangles):
 XY_STEP                  = 1        # don’t decimate in XY
 XY_MM_PER_PIXEL          = 0.25     # each DEM pixel = 0.25 mm on the print
-MASK_SMOOTH_SIGMA_PIX    = 3.0      # slightly stronger mask smoothing
-# DEM_SMOOTH_SIGMA_PIX     = 1.0      # leave this as-is for now 
+MASK_SMOOTH_SIGMA_PIX    = 5.0      # slightly stronger mask smoothing
 DEM_SMOOTH_SIGMA_PIX  = 4.5   # how wide the blur kernel is
 DEM_SMOOTH_BLEND      = 0.9   # 0 = original, 1 = fully blurred
+
+
+# Approximate capital coordinates (lon, lat) for South America
+CAPITALS = {
+    "Argentina":      ("Buenos Aires", -58.3816, -34.6037),
+    "Bolivia":        ("La Paz",       -68.1193, -16.4897),
+    "Brazil":         ("Brasilia",     -47.8825, -15.7942),
+    "Chile":          ("Santiago",     -70.6693, -33.4489),
+    "Colombia":       ("Bogotá",       -74.0721,   4.7110),
+    "Ecuador":        ("Quito",        -78.4678,  -0.1807),
+    "Guyana":         ("Georgetown",   -58.1553,   6.8013),
+    "Paraguay":       ("Asunción",     -57.5759, -25.2637),
+    "Peru":           ("Lima",         -77.0428, -12.0464),
+    "Suriname":       ("Paramaribo",   -55.2038,   5.8520),
+    "Uruguay":        ("Montevideo",   -56.1645, -34.9011),
+    "Venezuela":      ("Caracas",      -66.9036,  10.4806),
+    "French Guiana":  ("Cayenne",      -52.3350,   4.9220),
+}
 
 # -----------------------------
 # Helper functions
 # -----------------------------
 
-import geopandas as gpd
-from shapely.ops import unary_union
+# Star hole parameters (constant size, as you requested)
+STAR_RADIUS_MM      = 2.0     # outer radius of the star
+STAR_INNER_RATIO    = 0.45    # inner radius = outer * ratio
+STAR_POINTS         = 5       # 5-point star
 
-import geopandas as gpd
-from shapely.ops import unary_union
-from shapely.geometry import box
+def make_star_polygon_mm(cx, cy,
+                         outer_r=STAR_RADIUS_MM,
+                         inner_ratio=STAR_INNER_RATIO,
+                         points=STAR_POINTS):
+    """
+    Return a 2D shapely Polygon of a star centered at (cx, cy) in mm.
+    """
+    coords = []
+    for i in range(points * 2):
+        angle = 2.0 * np.pi * i / (points * 2)
+        r = outer_r if (i % 2 == 0) else outer_r * inner_ratio
+        x = cx + r * np.cos(angle)
+        y = cy + r * np.sin(angle)
+        coords.append((x, y))
+    return geom.Polygon(coords)
+
+def cut_capital_star_hole(solid, capital_xy_mm):
+    """
+    Boolean-subtract a vertical star prism at capital_xy_mm from 'solid'.
+    """
+    if capital_xy_mm is None:
+        return solid
+
+    cx, cy = capital_xy_mm
+
+    # 2D star polygon in XY
+    star_poly = make_star_polygon_mm(cx, cy)
+
+    # Extrude: make sure it spans fully through the mesh in Z
+    zmin, zmax = solid.bounds[:, 2]
+    total_height = (zmax - zmin) + BASE_THICKNESS_MM * 2.0
+
+    star_prism = trimesh.creation.extrude_polygon(star_poly, height=total_height)
+
+    # Position the prism so it spans from below zmin to above zmax
+    star_prism.apply_translation([0.0, 0.0, zmin - BASE_THICKNESS_MM])
+
+    # Boolean subtract; this uses trimesh's boolean engine
+    try:
+        solid_cut = solid.difference(star_prism)
+        if solid_cut is None:
+            # if boolean fails, fall back to original
+            return solid
+        return solid_cut
+    except Exception:
+        # in case boolean engine is unavailable or fails
+        return solid
+
+
+
+def get_capital_xy_mm(transform, dem_shape, country_name, step):
+    """
+    Return (x_mm, y_mm) of the capital in the mesh's XY coordinate system,
+    or None if the capital is unknown or outside the DEM.
+
+    - transform: rasterio Affine of the CLIPPED DEM
+    - dem_shape: (rows, cols) of the CLIPPED DEM
+    - country_name: e.g. "Colombia"
+    - step: the decimation step used in build_surface_mesh (local_step)
+    """
+    info = CAPITALS.get(country_name)
+    if info is None:
+        return None
+
+    capital_name, lon, lat = info
+    nrows, ncols = dem_shape
+
+    try:
+        row, col = rowcol(transform, lon, lat)
+    except Exception:
+        return None
+
+    if not (0 <= row < nrows and 0 <= col < ncols):
+        return None
+
+    # Map original DEM (row, col) to decimated grid index
+    row_dec = row // step
+    col_dec = col // step
+
+    # Same spacing used in build_surface_mesh
+    step_mm = XY_MM_PER_PIXEL * step
+
+    x_mm = col_dec * step_mm
+    y_mm = row_dec * step_mm
+    return (x_mm, y_mm)
 
 def get_country_geom(ne_path, country_name, dem_crs):
     """
@@ -173,27 +278,34 @@ def smooth_mask_and_dem(clipped_dem, nodata):
 
     dem = clipped_dem.astype(np.float32).copy()
 
-    # 1) Inside-country mask: anywhere the clip wrote data (including sea & islands)
+    # 1) Raw inside-country mask (anything written by the clip)
     inside_raw = dem != nodata
 
-    # 2) Smooth the mask to round borders and small gaps
+    # 2) Smooth the mask to round borders and close small gaps
     mask_f = gaussian_filter(inside_raw.astype(np.float32), sigma=MASK_SMOOTH_SIGMA_PIX)
     mask_smooth = mask_f > 0.5
 
-    # Anything outside the smoothed country footprint → NaN
+    # 3) Remove tiny isolated components (very small islands, specks)
+    labeled, num = label(mask_smooth)
+    if num > 0:
+        sizes = np.bincount(labeled.ravel())
+        sizes[0] = 0  # background
+
+        keep_labels = np.where(sizes >= MIN_COMPONENT_PIXELS)[0]
+        mask_filtered = np.isin(labeled, keep_labels)
+    else:
+        mask_filtered = mask_smooth
+
+    mask_smooth = mask_filtered
+
+    # 4) Anything outside the filtered country footprint → NaN
     dem[~mask_smooth] = np.nan
 
-    # 3) Identify "sea" cells within the country footprint:
-    #    - DEM is nodata (no elevation data) OR
-    #    - DEM is below or at sea level
+    # --- sea filling and DEM smoothing as before ---
     is_nodata_in = (dem == nodata) & mask_smooth
     is_below_sea = (dem <= SEA_LEVEL_M) & mask_smooth
-
     sea_mask = is_nodata_in | is_below_sea
-
-    # 4) Assign a constant shallow sea-floor elevation to all sea cells
-    #    This ensures sea between islands is a continuous plate.
-    dem[sea_mask] = SEA_PADDING_M  # e.g. -50 m
+    dem[sea_mask] = SEA_PADDING_M
 
     # 5) Optional DEM smoothing (for both land and sea), with blending
     if DEM_SMOOTH_SIGMA_PIX > 0:
@@ -333,6 +445,12 @@ def main():
     print("Smoothing mask and DEM...")
     dem_smooth = smooth_mask_and_dem(clipped_dem, nodata)
 
+    # print("Adding capital star (if defined)...")
+    # dem_with_capital = add_capital_star(dem_smooth, transform, args.country)
+
+    # # print("Building surface mesh...")
+    # # surface = build_surface_mesh(dem_with_capital)
+
     print("Building surface mesh...")
     # Use coarser grid for Brazil to reduce triangle count
     if args.country == "Brazil":
@@ -341,24 +459,34 @@ def main():
         local_step = XY_STEP
 
     surface = build_surface_mesh(dem_smooth, step=local_step)
+    
+    # Compute capital XY in mm (pre-scale, pre-mirror)
+    capital_xy_mm = get_capital_xy_mm(transform, clipped_dem.shape, args.country, local_step)
 
     print("Solidifying...")
     solid = solidify_surface_mesh(surface, base_z_mm=0.0)  # bottom at Z=0, terrain above
+
+    # Cut capital star hole (if capital known)
+    print("Cutting capital star hole (if defined)...")
+    solid = cut_capital_star_hole(solid, capital_xy_mm)
+
 
     if GLOBAL_XY_SCALE != 1.0:
         solid.apply_scale([GLOBAL_XY_SCALE, GLOBAL_XY_SCALE, 1.0])
         print(f"Applied GLOBAL_XY_SCALE = {GLOBAL_XY_SCALE:.4f} to XY (Z unchanged)")
 
-    # # --------------------------------------------------
-    # # Optional: scale XY to a target maximum size, keep Z (vertical exaggeration) unchanged
-    # # --------------------------------------------------
-    # TARGET_MAX_XY_MM = 100.0   # change this to your desired longest dimension
+    # ---------------------------------------
+    # Optional: mirror in X to correct left/right
+    # ---------------------------------------
+    if MIRROR_X:
+        # Reflect in X
+        solid.apply_scale([-1.0, 1.0, 1.0])
 
-    # xy_extent = max(solid.extents[0], solid.extents[1])
-    # if xy_extent > 0:
-    #     scale_xy = TARGET_MAX_XY_MM / xy_extent
-    #     solid.apply_scale([scale_xy, scale_xy, 1.0])   # scale XY only, preserve Z-scale
-    #     print(f"Applied XY-only scale factor: {scale_xy:.3f} (target max ~{TARGET_MAX_XY_MM} mm)")
+        # Shift back so X is positive again
+        v = solid.vertices
+        v[:, 0] -= v[:, 0].min()
+        solid.vertices = v
+
 
     print(f"Writing STL: {args.out}")
     solid.export(args.out)
