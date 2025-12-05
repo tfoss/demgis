@@ -1,0 +1,8 @@
+*.tif
+*.dem
+*.tiff
+*.stl
+*.vrt
+.DS_Store
+country_dems/
+__pycache__/
