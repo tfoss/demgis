@@ -52,70 +52,24 @@ CAPITALS = {
 # Helper functions
 # -----------------------------
 
-# Star hole parameters (constant size, as you requested)
-STAR_RADIUS_MM      = 2.0     # outer radius of the star
-STAR_INNER_RATIO    = 0.45    # inner radius = outer * ratio
-STAR_POINTS         = 5       # 5-point star
+import shapely.geometry as geom
 
-def make_star_polygon_mm(cx, cy,
-                         outer_r=STAR_RADIUS_MM,
-                         inner_ratio=STAR_INNER_RATIO,
-                         points=STAR_POINTS):
-    """
-    Return a 2D shapely Polygon of a star centered at (cx, cy) in mm.
-    """
-    coords = []
-    for i in range(points * 2):
-        angle = 2.0 * np.pi * i / (points * 2)
-        r = outer_r if (i % 2 == 0) else outer_r * inner_ratio
-        x = cx + r * np.cos(angle)
-        y = cy + r * np.sin(angle)
-        coords.append((x, y))
-    return geom.Polygon(coords)
-
-def cut_capital_star_hole(solid, capital_xy_mm):
-    """
-    Boolean-subtract a vertical star prism at capital_xy_mm from 'solid'.
-    """
-    if capital_xy_mm is None:
-        return solid
-
-    cx, cy = capital_xy_mm
-
-    # 2D star polygon in XY
-    star_poly = make_star_polygon_mm(cx, cy)
-
-    # Extrude: make sure it spans fully through the mesh in Z
-    zmin, zmax = solid.bounds[:, 2]
-    total_height = (zmax - zmin) + BASE_THICKNESS_MM * 2.0
-
-    star_prism = trimesh.creation.extrude_polygon(star_poly, height=total_height)
-
-    # Position the prism so it spans from below zmin to above zmax
-    star_prism.apply_translation([0.0, 0.0, zmin - BASE_THICKNESS_MM])
-
-    # Boolean subtract; this uses trimesh's boolean engine
-    try:
-        solid_cut = solid.difference(star_prism)
-        if solid_cut is None:
-            # if boolean fails, fall back to original
-            return solid
-        return solid_cut
-    except Exception:
-        # in case boolean engine is unavailable or fails
-        return solid
-
-
+# -----------------------------
+# Capital star-hole parameters
+# -----------------------------
+STAR_RADIUS_MM   = 2.0   # outer radius of star (constant size, your choice)
+STAR_INNER_RATIO = 0.45  # inner spike radius = outer * ratio
+STAR_POINTS      = 5     # 5-pointed star
 
 def get_capital_xy_mm(transform, dem_shape, country_name, step):
     """
     Return (x_mm, y_mm) of the capital in the mesh's XY coordinate system,
-    or None if the capital is unknown or outside the DEM.
+    or None if capital not known or outside the DEM.
 
-    - transform: rasterio Affine of the CLIPPED DEM
-    - dem_shape: (rows, cols) of the CLIPPED DEM
-    - country_name: e.g. "Colombia"
-    - step: the decimation step used in build_surface_mesh (local_step)
+    transform  : rasterio Affine of the CLIPPED DEM
+    dem_shape  : (rows, cols) of the CLIPPED DEM
+    country_name : e.g. "Paraguay"
+    step       : decimation step used in build_surface_mesh (local_step)
     """
     info = CAPITALS.get(country_name)
     if info is None:
@@ -132,16 +86,63 @@ def get_capital_xy_mm(transform, dem_shape, country_name, step):
     if not (0 <= row < nrows and 0 <= col < ncols):
         return None
 
-    # Map original DEM (row, col) to decimated grid index
+    # Map DEM indices to decimated grid index
     row_dec = row // step
     col_dec = col // step
 
     # Same spacing used in build_surface_mesh
     step_mm = XY_MM_PER_PIXEL * step
-
     x_mm = col_dec * step_mm
     y_mm = row_dec * step_mm
     return (x_mm, y_mm)
+
+def make_star_polygon_mm(cx, cy,
+                         outer_r=STAR_RADIUS_MM,
+                         inner_ratio=STAR_INNER_RATIO,
+                         points=STAR_POINTS):
+    """
+    Build a 2D star polygon in mm, centered at (cx, cy).
+    """
+    coords = []
+    for i in range(points * 2):
+        angle = 2.0 * np.pi * i / (points * 2)
+        r = outer_r if (i % 2 == 0) else outer_r * inner_ratio
+        x = cx + r * np.cos(angle)
+        y = cy + r * np.sin(angle)
+        coords.append((x, y))
+    return geom.Polygon(coords)
+
+def cut_capital_star_hole(solid, capital_xy_mm):
+    """
+    Boolean-subtract a vertical star prism at capital_xy_mm from 'solid'.
+    If capital_xy_mm is None or boolean fails, returns the unmodified mesh.
+    """
+    if capital_xy_mm is None:
+        return solid
+
+    cx, cy = capital_xy_mm
+
+    # 2D star in XY
+    star_poly = make_star_polygon_mm(cx, cy)
+
+    # Extrude tall enough to pass fully through the solid
+    zmin, zmax = solid.bounds[:, 2]
+    total_height = (zmax - zmin) + BASE_THICKNESS_MM * 2.0
+
+    star_prism = trimesh.creation.extrude_polygon(star_poly, height=total_height)
+
+    # Place it so it spans from below zmin to above zmax
+    star_prism.apply_translation([0.0, 0.0, zmin - BASE_THICKNESS_MM])
+
+    try:
+        solid_cut = solid.difference(star_prism)
+        if solid_cut is None:
+            return solid
+        return solid_cut
+    except Exception:
+        # If boolean fails for any reason, fall back gracefully
+        return solid
+
 
 def get_country_geom(ne_path, country_name, dem_crs):
     """
@@ -442,14 +443,26 @@ def main():
     print(f"Clipping DEM to {args.country}...")
     clipped_dem, transform, nodata = clip_dem_to_country(args.dem, args.ne, args.country)
 
+    # print("Smoothing mask and DEM...")
+    # dem_smooth = smooth_mask_and_dem(clipped_dem, nodata)
+
+    # # print("Adding capital star (if defined)...")
+    # # dem_with_capital = add_capital_star(dem_smooth, transform, args.country)
+
+    # # # print("Building surface mesh...")
+    # # # surface = build_surface_mesh(dem_with_capital)
+
+    # print("Building surface mesh...")
+    # # Use coarser grid for Brazil to reduce triangle count
+    # if args.country == "Brazil":
+    #     local_step = 3   # try 2 or 3
+    # else:
+    #     local_step = XY_STEP
+
+    # surface = build_surface_mesh(dem_smooth, step=local_step)
+    
     print("Smoothing mask and DEM...")
     dem_smooth = smooth_mask_and_dem(clipped_dem, nodata)
-
-    # print("Adding capital star (if defined)...")
-    # dem_with_capital = add_capital_star(dem_smooth, transform, args.country)
-
-    # # print("Building surface mesh...")
-    # # surface = build_surface_mesh(dem_with_capital)
 
     print("Building surface mesh...")
     # Use coarser grid for Brazil to reduce triangle count
@@ -459,9 +472,10 @@ def main():
         local_step = XY_STEP
 
     surface = build_surface_mesh(dem_smooth, step=local_step)
-    
-    # Compute capital XY in mm (pre-scale, pre-mirror)
+
+    # Capital position in mesh XY (mm), if known
     capital_xy_mm = get_capital_xy_mm(transform, clipped_dem.shape, args.country, local_step)
+
 
     print("Solidifying...")
     solid = solidify_surface_mesh(surface, base_z_mm=0.0)  # bottom at Z=0, terrain above
