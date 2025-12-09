@@ -320,18 +320,20 @@ def mark_bridges_in_dem(dem, dem_transform, bridge_geoms_crs, bridge_height_mm):
     Mark bridge areas in DEM at sea level elevation.
 
     Sets pixels within bridge geometries to sea level (0m), which will appear
-    at BASE_THICKNESS_MM in the final mesh. These should be painted blue.
+    at BASE_THICKNESS_MM in the final mesh initially. Bridge vertices will be
+    lowered in a post-processing step.
+
+    Returns the DEM and list of bridge bounding boxes in pixel coordinates.
     """
     if not bridge_geoms_crs:
-        return dem
+        return dem, []
 
     print(f"    Marking {len(bridge_geoms_crs)} bridge zones in DEM...")
 
     # Set bridges to sea level (0m) so they're at the base of the model
     # This ensures they create continuous mesh connecting islands to mainland
-    # They'll be flat at ocean level and should be painted blue
     bridge_elev_m = 0.0  # Sea level
-    print(f"    Bridge elevation: {bridge_elev_m}m (sea level) = {BASE_THICKNESS_MM}mm in final model")
+    print(f"    Bridge elevation: {bridge_elev_m}m (sea level) = {BASE_THICKNESS_MM}mm initially")
 
     # Rasterize bridge geometries
     from rasterio import features
@@ -341,6 +343,8 @@ def mark_bridges_in_dem(dem, dem_transform, bridge_geoms_crs, bridge_height_mm):
     # Create a mask for bridge areas
     nrows, ncols = dem.shape
     transform_matrix = dem_transform
+
+    bridge_pixel_boxes = []
 
     # Rasterize each bridge
     for i, bridge_geom in enumerate(bridge_geoms_crs):
@@ -363,10 +367,72 @@ def mark_bridges_in_dem(dem, dem_transform, bridge_geoms_crs, bridge_height_mm):
             pixel_count = np.sum(bridge_mask)
             print(f"      Bridge {i+1}: {pixel_count} pixels marked (after dilation)")
 
+            # Get bounding box of bridge pixels for later mesh processing
+            rows, cols = np.where(bridge_mask == 1)
+            if len(rows) > 0:
+                bbox = (rows.min(), rows.max(), cols.min(), cols.max())
+                bridge_pixel_boxes.append(bbox)
+
         except Exception as e:
             print(f"      WARNING: Failed to mark bridge {i+1}: {e}")
 
-    return dem
+    return dem, bridge_pixel_boxes
+
+
+def lower_bridge_vertices(mesh, bridge_pixel_boxes, step, bridge_height_mm):
+    """
+    Lower top surface vertices in bridge regions to below base thickness.
+
+    Creates solid bridges from z=0 (bottom) to bridge_height_mm (top) by:
+    - Keeping bottom face vertices at z=0
+    - Lowering top surface vertices to bridge_height_mm
+    - Side vertices remain to connect top and bottom
+
+    Args:
+        mesh: Trimesh object
+        bridge_pixel_boxes: List of (row_min, row_max, col_min, col_max) tuples
+        step: XY_STEP parameter
+        bridge_height_mm: Target height for bridge top surface in mm
+
+    Returns:
+        Modified mesh with lowered bridge top surface
+    """
+    if not bridge_pixel_boxes:
+        return mesh
+
+    print(f"  Lowering bridge top surface to {bridge_height_mm}mm...")
+
+    vertices = mesh.vertices.copy()
+    modified_count = 0
+
+    # Convert pixel boxes to mm coordinates
+    for row_min, row_max, col_min, col_max in bridge_pixel_boxes:
+        # Pixel to mm conversion
+        x_min_mm = col_min * XY_MM_PER_PIXEL
+        x_max_mm = (col_max + 1) * XY_MM_PER_PIXEL
+        y_min_mm = row_min * XY_MM_PER_PIXEL
+        y_max_mm = (row_max + 1) * XY_MM_PER_PIXEL
+
+        # Find TOP SURFACE vertices in this bridge region
+        # Top surface is at z ≈ BASE_THICKNESS_MM (2.0mm for sea level)
+        # We want to lower these to bridge_height_mm
+        # Bottom face (z ≈ 0) should be left alone
+        in_bridge_top = (
+            (vertices[:, 0] >= x_min_mm) & (vertices[:, 0] <= x_max_mm) &
+            (vertices[:, 1] >= y_min_mm) & (vertices[:, 1] <= y_max_mm) &
+            (vertices[:, 2] >= BASE_THICKNESS_MM - 0.1) &  # Near sea level top
+            (vertices[:, 2] <= BASE_THICKNESS_MM + 0.5)    # Allow some tolerance
+        )
+
+        # Lower only the TOP surface vertices to bridge height
+        vertices[in_bridge_top, 2] = bridge_height_mm
+        modified_count += np.sum(in_bridge_top)
+
+    print(f"    Lowered {modified_count} top surface vertices to {bridge_height_mm}mm")
+    print(f"    Bridges are now solid from 0mm (bottom) to {bridge_height_mm}mm (top)")
+
+    mesh.vertices = vertices
+    return mesh
 
 
 def load_and_simplify_country_with_islands(ne_path, country_name, dem_crs, min_island_area_km2, bridge_width_km):
@@ -456,8 +522,9 @@ def process_country_with_islands(country_name, ne_path, dem_src, output_dir, ste
     print(f"  DEBUG: After smoothing, DEM has {num_smooth} separate land regions")
 
     # Mark bridge zones AFTER smoothing to ensure they stay at low elevation
+    bridge_pixel_boxes = []
     if bridge_geoms:
-        dem_smooth = mark_bridges_in_dem(dem_smooth, transform, bridge_geoms, bridge_height_mm)
+        dem_smooth, bridge_pixel_boxes = mark_bridges_in_dem(dem_smooth, transform, bridge_geoms, bridge_height_mm)
 
     # DEBUG: Check regions after marking bridges (include sea level pixels)
     labeled_bridged, num_bridged = label(dem_smooth >= 0)
@@ -479,6 +546,10 @@ def process_country_with_islands(country_name, ne_path, dem_src, output_dir, ste
     print("  Solidifying...")
     solid = solidify_surface_mesh(surface, base_z_mm=0.0)
     print(f"    Solid: {len(solid.faces)} faces")
+
+    # Lower bridge vertices if we have bridges
+    if bridge_pixel_boxes:
+        solid = lower_bridge_vertices(solid, bridge_pixel_boxes, step, bridge_height_mm)
 
     # Vector clip - try to apply for smooth boundaries
     print("  Clipping to vector boundary...")
