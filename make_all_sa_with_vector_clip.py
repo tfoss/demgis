@@ -312,8 +312,17 @@ def simplify_mesh(mesh, target_faces):
         return mesh
 
 
-def get_capital_xy_mm(transform, dem_shape, country_name, step):
-    """Get capital coordinates in mm."""
+def get_capital_xy_mm(transform, dem_shape, country_name, step, dem_crs=None):
+    """
+    Get capital coordinates in mm, transforming from WGS84 to DEM CRS if needed.
+
+    Args:
+        transform: Rasterio transform
+        dem_shape: DEM shape (nrows, ncols)
+        country_name: Name of country/state
+        step: XY_STEP decimation parameter
+        dem_crs: CRS of the DEM (optional, for coordinate transformation)
+    """
     info = CAPITALS.get(country_name)
     if info is None:
         return None
@@ -322,7 +331,16 @@ def get_capital_xy_mm(transform, dem_shape, country_name, step):
     nrows, ncols = dem_shape
 
     try:
-        row, col = rowcol(transform, lon, lat)
+        # If DEM is not in WGS84, transform capital coordinates
+        if dem_crs is not None and dem_crs != 'EPSG:4326':
+            from pyproj import Transformer
+            # Transform from WGS84 to DEM CRS
+            transformer = Transformer.from_crs("EPSG:4326", dem_crs, always_xy=True)
+            lon_proj, lat_proj = transformer.transform(lon, lat)
+            row, col = rowcol(transform, lon_proj, lat_proj)
+        else:
+            # DEM is in WGS84, use coordinates directly
+            row, col = rowcol(transform, lon, lat)
     except:
         return None
 
@@ -473,8 +491,8 @@ def process_country(country_name, country_geom, dem_src, dem_transform, output_d
     surface = build_surface_mesh(dem_smooth, step=step)
     print(f"    Surface: {len(surface.faces)} faces")
 
-    # Compute capital XY
-    capital_xy_mm = get_capital_xy_mm(transform, clipped_dem.shape, country_name, step)
+    # Compute capital XY (transform from WGS84 to DEM CRS if needed)
+    capital_xy_mm = get_capital_xy_mm(transform, clipped_dem.shape, country_name, step, dem_src.crs)
 
     # Solidify
     print("  Solidifying...")

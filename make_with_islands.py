@@ -44,7 +44,7 @@ from make_all_sa_with_vector_clip import (
 # Island bridging parameters
 MIN_ISLAND_AREA_KM2 = 5000      # Only connect islands above this size
 BRIDGE_WIDTH_KM = 5.0            # Width of connecting bridge (increased for strength)
-BRIDGE_HEIGHT_MM = 0.5           # Height of bridge (well below BASE_THICKNESS_MM=2.0)
+BRIDGE_HEIGHT_MM = 1.5           # Height of bridge (well below BASE_THICKNESS_MM=2.0)
 MAX_BRIDGE_DISTANCE_KM = 50.0    # Don't bridge islands farther than this
 
 
@@ -437,7 +437,7 @@ def lower_bridge_vertices(mesh, bridge_pixel_boxes, step, bridge_height_mm):
 
 def load_and_simplify_country_with_islands(ne_path, country_name, dem_crs, min_island_area_km2, bridge_width_km):
     """
-    Load a country and optionally connect large islands.
+    Load a country/state and optionally connect large islands.
 
     Returns:
         - country_geom: Simplified geometry (possibly with islands connected)
@@ -445,10 +445,12 @@ def load_and_simplify_country_with_islands(ne_path, country_name, dem_crs, min_i
     """
     gdf = gpd.read_file(ne_path)
 
-    # Find country
-    row = gdf[gdf["ADMIN"] == country_name]
+    # Find country/state - try ADMIN column first (countries), then name column (states)
+    row = gdf[gdf["ADMIN"] == country_name] if "ADMIN" in gdf.columns else gpd.GeoDataFrame()
+    if row.empty and "name" in gdf.columns:
+        row = gdf[gdf["name"] == country_name]
     if row.empty:
-        raise ValueError(f"Country '{country_name}' not found")
+        raise ValueError(f"Country/state '{country_name}' not found in {ne_path}")
 
     geom = row.iloc[0].geometry
 
@@ -541,7 +543,7 @@ def process_country_with_islands(country_name, ne_path, dem_src, output_dir, ste
     bbox_surface = surface.bounds
     print(f"  DEBUG: Surface mesh bounds: {bbox_surface}")
 
-    capital_xy_mm = get_capital_xy_mm(transform, clipped_dem.shape, country_name, step)
+    capital_xy_mm = get_capital_xy_mm(transform, clipped_dem.shape, country_name, step, dem_crs)
 
     print("  Solidifying...")
     solid = solidify_surface_mesh(surface, base_z_mm=0.0)
