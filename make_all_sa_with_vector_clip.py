@@ -31,7 +31,7 @@ XY_STEP = 3
 XY_MM_PER_PIXEL = 0.25
 MASK_SMOOTH_SIGMA_PIX = 10.0
 DEM_SMOOTH_SIGMA_PIX = 4.5
-DEM_SMOOTH_BLEND = 0.3  # Balance smoothing and peak preservation (was 0.9)
+DEM_SMOOTH_BLEND = 0.6  # Higher blend for smoother terrain; peaks preserved separately
 
 TARGET_FACES = 100000
 VECTOR_SIMPLIFY_DEGREES = 0.02
@@ -39,6 +39,10 @@ VECTOR_SIMPLIFY_DEGREES = 0.02
 STAR_RADIUS_MM = 6.0
 STAR_INNER_RATIO = 0.5
 STAR_POINTS = 4
+STAR_EXTRUDE_HEIGHT_MM = 2.0  # Height to extrude star above surface (when using --extrude-star)
+
+# Lake removal (optional feature via --remove-lakes)
+MIN_LAKE_AREA_KM2 = 100.0  # Remove lakes larger than this (as holes in the mesh)
 
 CAPITALS = {
     "Argentina": ("Buenos Aires", -58.3816, -34.6037),
@@ -199,7 +203,15 @@ def smooth_mask_and_dem(clipped_dem, nodata):
         with np.errstate(invalid="ignore", divide="ignore"):
             blurred = np.where(w > 0, dem_blur / w, np.nan)
 
+        # Blend smoothed and raw
         dem = DEM_SMOOTH_BLEND * blurred + (1.0 - DEM_SMOOTH_BLEND) * raw
+
+        # Preserve peaks: where raw is significantly higher than blurred, keep more of raw
+        # This prevents Gaussian smoothing from eroding mountain peaks
+        peak_threshold = 50.0  # meters - preserve elevations >50m higher than smoothed
+        is_peak = (raw - blurred) > peak_threshold
+        # For peaks, blend less aggressively - use 80% raw instead of blend ratio
+        dem[is_peak] = 0.8 * raw[is_peak] + 0.2 * blurred[is_peak]
 
     return dem
 
@@ -389,6 +401,132 @@ def cut_capital_star_hole(solid, capital_xy_mm):
         return solid
 
 
+def add_capital_star_extrusion(solid, capital_xy_mm, extrude_height_mm=STAR_EXTRUDE_HEIGHT_MM):
+    """
+    Add an extruded star on top of the mesh at the capital location.
+    This is more visible for edge capitals than cutting a hole.
+    """
+    if capital_xy_mm is None:
+        return solid
+
+    cx, cy = capital_xy_mm
+    star_poly = make_star_polygon_mm(cx, cy)
+
+    # Find the z-height at the capital location
+    # Use the maximum z in the region around the capital
+    vertices = solid.vertices
+
+    # Find vertices within star radius
+    dx = vertices[:, 0] - cx
+    dy = vertices[:, 1] - cy
+    dist = np.sqrt(dx**2 + dy**2)
+    nearby = dist <= STAR_RADIUS_MM
+
+    if not np.any(nearby):
+        print(f"    WARNING: No vertices near capital at ({cx:.1f}, {cy:.1f}) mm")
+        return solid
+
+    # Get the maximum z height in the star region (top surface)
+    top_z = np.max(vertices[nearby, 2])
+
+    # Get the minimum z of the entire mesh (bottom/baseline)
+    bottom_z = np.min(vertices[:, 2])
+
+    try:
+        # Calculate total height needed: from bottom to top + extrusion
+        total_height = (top_z - bottom_z) + extrude_height_mm
+
+        # Create extruded star that goes from bottom to top+extrusion
+        star_prism = robust_extrude_polygon(star_poly, total_height)
+        star_prism.apply_translation([0.0, 0.0, bottom_z])
+
+        # Union the star with the solid
+        result = solid.union(star_prism)
+        if result is None:
+            print("    WARNING: Star extrusion union failed")
+            return solid
+
+        print(f"    Star extruded at ({cx:.1f}, {cy:.1f}) mm, from baseline to +{extrude_height_mm:.1f}mm above terrain")
+        return result
+    except Exception as e:
+        print(f"    WARNING: Star extrusion failed ({e})")
+        return solid
+
+
+def cut_lakes_from_mesh(solid, country_geom, dem_transform, min_lake_area_km2=MIN_LAKE_AREA_KM2):
+    """
+    Cut large lakes (interior holes) from the mesh.
+
+    This finds interior rings (holes) in the country geometry that represent lakes,
+    and cuts them out of the solid mesh if they're above the minimum size threshold.
+    """
+    from shapely.ops import transform as shapely_transform
+    from shapely.geometry import Polygon
+
+    # Collect all interior holes from Polygon or MultiPolygon
+    lakes = []
+
+    if country_geom.geom_type == 'Polygon':
+        geoms_to_check = [country_geom]
+    elif country_geom.geom_type == 'MultiPolygon':
+        geoms_to_check = list(country_geom.geoms)
+    else:
+        return solid, 0
+
+    # Get all interior holes (lakes) from all polygons
+    for poly in geoms_to_check:
+        if not hasattr(poly, 'interiors'):
+            continue
+
+        for interior in poly.interiors:
+            lake_poly = Polygon(interior)
+            # Calculate area in km² (CRS should be in meters for AEA projection)
+            area_m2 = lake_poly.area
+            area_km2 = area_m2 / 1_000_000.0
+
+            if area_km2 >= min_lake_area_km2:
+                lakes.append((lake_poly, area_km2))
+
+    if not lakes:
+        return solid, 0
+
+    print(f"  Found {len(lakes)} large lakes (>{min_lake_area_km2} km²), cutting as holes...")
+
+    # Convert lake polygons from CRS to mm coordinates
+    def crs_to_mm(x, y):
+        from rasterio.transform import rowcol
+        rows, cols = rowcol(dem_transform, x, y)
+        x_mm = np.array(cols, dtype=np.float64) * XY_MM_PER_PIXEL
+        y_mm = np.array(rows, dtype=np.float64) * XY_MM_PER_PIXEL
+        return x_mm, y_mm
+
+    zmin, zmax = solid.bounds[:, 2]
+    total_height = (zmax - zmin) + BASE_THICKNESS_MM * 2.0
+
+    lakes_cut = 0
+    for lake_poly, area_km2 in lakes:
+        try:
+            # Transform to mm coordinates
+            lake_mm = shapely_transform(crs_to_mm, lake_poly)
+
+            # Create extruded prism to cut
+            lake_prism = robust_extrude_polygon(lake_mm, total_height)
+            lake_prism.apply_translation([0.0, 0.0, zmin - BASE_THICKNESS_MM])
+
+            # Cut the lake from the solid
+            result = solid.difference(lake_prism)
+            if result is not None:
+                solid = result
+                lakes_cut += 1
+                print(f"    Cut lake: {area_km2:.1f} km²")
+            else:
+                print(f"    WARNING: Failed to cut lake ({area_km2:.1f} km²)")
+        except Exception as e:
+            print(f"    WARNING: Lake cut failed ({area_km2:.1f} km²): {e}")
+
+    return solid, lakes_cut
+
+
 def get_country_geom_in_mm(country_geom, dem_transform, step):
     """Convert country geometry from CRS to mm coordinates."""
     from shapely.ops import transform as shapely_transform
@@ -473,7 +611,7 @@ def clip_mesh_to_vector(solid, country_geom_mm):
         return solid
 
 
-def process_country(country_name, country_geom, dem_src, dem_transform, output_dir, step, target_faces=None):
+def process_country(country_name, country_geom, dem_src, dem_transform, output_dir, step, target_faces=None, extrude_star=False, remove_lakes=False, min_lake_area_km2=MIN_LAKE_AREA_KM2):
     """Process a single country with vector clipping."""
     print(f"\nProcessing {country_name}...")
 
@@ -509,9 +647,19 @@ def process_country(country_name, country_geom, dem_src, dem_transform, output_d
         print(f"  Simplifying (target={target_faces})...")
         solid = simplify_mesh(solid, target_faces)
 
-    # Cut star
-    print("  Cutting capital star...")
-    solid = cut_capital_star_hole(solid, capital_xy_mm)
+    # Cut lakes (optional)
+    if remove_lakes:
+        solid, lakes_cut = cut_lakes_from_mesh(solid, country_geom, transform, min_lake_area_km2)
+        if lakes_cut > 0:
+            print(f"  ✓ Removed {lakes_cut} lakes as holes")
+
+    # Add or cut capital star
+    if extrude_star:
+        print("  Extruding capital star...")
+        solid = add_capital_star_extrusion(solid, capital_xy_mm)
+    else:
+        print("  Cutting capital star...")
+        solid = cut_capital_star_hole(solid, capital_xy_mm)
 
     # Scale & mirror
     if GLOBAL_XY_SCALE != 1.0:
@@ -524,7 +672,8 @@ def process_country(country_name, country_geom, dem_src, dem_transform, output_d
         solid.vertices = v
 
     # Export
-    out_path = os.path.join(output_dir, f"{country_name.replace(' ', '_')}_solid.stl")
+    suffix = "_starup" if extrude_star else "_solid"
+    out_path = os.path.join(output_dir, f"{country_name.replace(' ', '_')}{suffix}.stl")
     print(f"  Writing: {out_path} ({len(solid.faces)} faces)")
     solid.export(out_path)
 
@@ -537,6 +686,12 @@ def main():
     parser.add_argument("--step", type=int, default=XY_STEP)
     parser.add_argument("--target-faces", type=int, default=TARGET_FACES)
     parser.add_argument("--countries", nargs="+")
+    parser.add_argument("--extrude-star", action="store_true",
+                        help="Extrude capital star upward instead of cutting a hole (better for edge capitals)")
+    parser.add_argument("--remove-lakes", action="store_true",
+                        help="Remove large lakes as holes in the mesh")
+    parser.add_argument("--min-lake-area", type=float, default=MIN_LAKE_AREA_KM2,
+                        help=f"Minimum lake area in km² to remove (default: {MIN_LAKE_AREA_KM2})")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -552,13 +707,20 @@ def main():
         countries = {k: v for k, v in countries.items() if k in args.countries}
 
     print(f"\nProcessing {len(countries)} countries...")
+    if args.extrude_star:
+        print("Note: Capital stars will be extruded upward (raised)")
+    if args.remove_lakes:
+        print(f"Note: Lakes ≥{args.min_lake_area} km² will be removed as holes")
 
     target_faces = args.target_faces if args.target_faces > 0 else None
 
     for country_name, country_geom in countries.items():
         try:
             process_country(country_name, country_geom, dem_src, dem_src.transform,
-                          args.output_dir, args.step, target_faces)
+                          args.output_dir, args.step, target_faces,
+                          extrude_star=args.extrude_star,
+                          remove_lakes=args.remove_lakes,
+                          min_lake_area_km2=args.min_lake_area)
         except Exception as e:
             print(f"\nERROR: {country_name}: {e}")
             import traceback
