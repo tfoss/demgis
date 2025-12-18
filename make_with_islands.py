@@ -42,10 +42,10 @@ from make_all_sa_with_vector_clip import (
 )
 
 # Island bridging parameters
-MIN_ISLAND_AREA_KM2 = 5000      # Only connect islands above this size
-BRIDGE_WIDTH_KM = 5.0            # Width of connecting bridge (increased for strength)
+MIN_ISLAND_AREA_KM2 = 900      # Only connect islands above this size (includes Kodiak at 926 km²)
+BRIDGE_WIDTH_KM = 25.0            # Width of connecting bridge (increased for printability)
 BRIDGE_HEIGHT_MM = 1.5           # Height of bridge (well below BASE_THICKNESS_MM=2.0)
-MAX_BRIDGE_DISTANCE_KM = 50.0    # Don't bridge islands farther than this
+MAX_BRIDGE_DISTANCE_KM = 275.0    # Don't bridge islands farther than this (includes Nunivak at ~262km)
 
 
 def calculate_polygon_area_km2(polygon, crs):
@@ -168,22 +168,24 @@ def connect_islands_to_mainland(country_geom, country_name, dem_crs, min_island_
         if not combined.is_valid:
             combined = make_valid(combined)
 
-        # If still MultiPolygon, use buffer-unbuffer to force connection
+        # If still MultiPolygon, use a VERY SMALL buffer-unbuffer to force connection
+        # Use a tiny buffer (0.001 degrees ~100m) to only connect pieces that are very close
+        # This connects bridges without filling large interior passages
         if combined.geom_type == 'MultiPolygon':
             print(f"    Initial merge: MultiPolygon with {len(combined.geoms)} components")
-            print(f"    Applying buffer-unbuffer to force bridge connections...")
+            print(f"    Applying minimal buffer-unbuffer (~100m) to connect bridges...")
 
-            # Buffer by small amount (0.01 degrees ~1km) to force overlaps
-            buffered = combined.buffer(0.01)
+            # Buffer by tiny amount (0.001 degrees ~100m) to force overlaps
+            buffered = combined.buffer(0.001)
             # Unbuffer back to near-original size
-            combined = buffered.buffer(-0.01)
+            combined = buffered.buffer(-0.001)
 
             if not combined.is_valid:
                 combined = make_valid(combined)
 
         print(f"    Successfully connected {len(bridge_polys)} islands via bridges")
         if combined.geom_type == 'MultiPolygon':
-            print(f"    Final result: MultiPolygon with {len(combined.geoms)} components (buffer-unbuffer didn't fully connect)")
+            print(f"    Final result: MultiPolygon with {len(combined.geoms)} components")
         else:
             print(f"    Final result: Single Polygon (all islands connected!)")
 
@@ -222,8 +224,14 @@ def clip_mesh_to_vector_with_islands(solid, country_geom_mm):
             print(f"    WARNING: Component {i} has invalid geometry type {poly.geom_type}, skipping")
             continue
 
+        # Skip very small polygons (< 10 vertices) as they can cause union issues
+        num_vertices = len(poly.exterior.coords)
+        if num_vertices < 10:
+            print(f"    Skipping tiny polygon {i} ({num_vertices} vertices) - likely artifact")
+            continue
+
         try:
-            print(f"    Extruding polygon {i} with {len(poly.exterior.coords)} vertices...")
+            print(f"    Extruding polygon {i} with {num_vertices} vertices...")
             cutter = robust_extrude_polygon(poly, height)
             cutter.apply_translation([0, 0, zmin - 1.0])
 
@@ -251,7 +259,17 @@ def clip_mesh_to_vector_with_islands(solid, country_geom_mm):
 
     print(f"    Combined cutter: {len(combined_cutter.vertices)} verts, {len(combined_cutter.faces)} faces")
 
-    # Perform the intersection
+    # Verify combined cutter is a volume before intersection
+    if not combined_cutter.is_volume:
+        print(f"    WARNING: Combined cutter is not a volume, attempting repair...")
+        combined_cutter.fill_holes()
+        combined_cutter.update_faces(combined_cutter.unique_faces())
+        trimesh.repair.fix_normals(combined_cutter)
+        if not combined_cutter.is_volume:
+            print(f"    WARNING: Cutter still not a volume after repair, skipping vector clip")
+            return solid
+
+    # Perform the intersection (don't require solid to be a volume - manifold engine can handle it)
     try:
         result = solid.intersection(combined_cutter, engine='manifold')
         print(f"    Vector clip: {len(solid.faces)} -> {len(result.faces)} faces")
@@ -330,10 +348,16 @@ def mark_bridges_in_dem(dem, dem_transform, bridge_geoms_crs, bridge_height_mm):
 
     print(f"    Marking {len(bridge_geoms_crs)} bridge zones in DEM...")
 
-    # Set bridges to sea level (0m) so they're at the base of the model
-    # This ensures they create continuous mesh connecting islands to mainland
-    bridge_elev_m = 0.0  # Sea level
-    print(f"    Bridge elevation: {bridge_elev_m}m (sea level) = {BASE_THICKNESS_MM}mm initially")
+    # Set bridges to a calculated elevation so when solidified they end up at bridge_height_mm
+    # Note: smooth_mask_and_dem() will have already set sea-level areas to SEA_PADDING_M
+    # solidify_surface_mesh adds BASE_THICKNESS_MM to all Z values
+    # So: bridge_elev_m * Z_SCALE_MM_PER_M + BASE_THICKNESS_MM = bridge_height_mm
+    # Therefore: bridge_elev_m = (bridge_height_mm - BASE_THICKNESS_MM) / Z_SCALE_MM_PER_M
+    bridge_elev_m = (bridge_height_mm - BASE_THICKNESS_MM) / Z_SCALE_MM_PER_M
+
+    # Ensure bridge elevation is not below SEA_PADDING_M to avoid being overwritten by smoothing
+    # (Actually we mark AFTER smoothing, so this shouldn't be an issue, but good to be explicit)
+    print(f"    Bridge elevation in DEM: {bridge_elev_m:.1f}m → {bridge_height_mm:.1f}mm after solidification")
 
     # Rasterize bridge geometries
     from rasterio import features
@@ -377,6 +401,66 @@ def mark_bridges_in_dem(dem, dem_transform, bridge_geoms_crs, bridge_height_mm):
             print(f"      WARNING: Failed to mark bridge {i+1}: {e}")
 
     return dem, bridge_pixel_boxes
+
+
+def lower_bridge_vertices_from_geoms(mesh, bridge_geoms_crs, dem_transform, bridge_height_mm):
+    """
+    Lower vertices in bridge regions to create thin, paintable bridges.
+    This version works with bridge geometries in CRS coordinates and converts to mm.
+
+    Args:
+        mesh: The solidified mesh after vector clipping
+        bridge_geoms_crs: List of bridge Polygon geometries in DEM CRS
+        dem_transform: Affine transform from DEM
+        bridge_height_mm: Target height for bridge top surface
+
+    Returns:
+        Modified mesh with lowered bridge top surface
+    """
+    if not bridge_geoms_crs:
+        return mesh
+
+    print(f"    Converting {len(bridge_geoms_crs)} bridge zones to mm coordinates...")
+
+    vertices = mesh.vertices.copy()
+    modified_count = 0
+
+    # Convert each bridge geometry to mm coordinates
+    for i, bridge_geom in enumerate(bridge_geoms_crs):
+        # Get bridge bounds in CRS
+        minx, miny, maxx, maxy = bridge_geom.bounds
+
+        # Convert to pixel coordinates
+        from rasterio.transform import rowcol
+        row_min, col_min = rowcol(dem_transform, minx, maxy)  # Note: y inverted
+        row_max, col_max = rowcol(dem_transform, maxx, miny)
+
+        # Convert to mm coordinates
+        x_min_mm = col_min * XY_MM_PER_PIXEL
+        x_max_mm = (col_max + 1) * XY_MM_PER_PIXEL
+        y_min_mm = row_min * XY_MM_PER_PIXEL
+        y_max_mm = (row_max + 1) * XY_MM_PER_PIXEL
+
+        # Find TOP SURFACE vertices in this bridge region
+        # Top surface should be >= BASE_THICKNESS_MM (since we didn't mark bridges in DEM)
+        in_bridge_top = (
+            (vertices[:, 0] >= x_min_mm) & (vertices[:, 0] <= x_max_mm) &
+            (vertices[:, 1] >= y_min_mm) & (vertices[:, 1] <= y_max_mm) &
+            (vertices[:, 2] >= BASE_THICKNESS_MM)  # Only top surface vertices
+        )
+
+        # Lower only the TOP surface vertices to bridge height
+        vertices[in_bridge_top, 2] = bridge_height_mm
+        count = np.sum(in_bridge_top)
+        modified_count += count
+        if count > 0:
+            print(f"      Bridge {i+1}: lowered {count} vertices")
+
+    print(f"    Total: lowered {modified_count} vertices to {bridge_height_mm}mm")
+    print(f"    Bridges are now thin from 0mm (bottom) to {bridge_height_mm}mm (top)")
+
+    mesh.vertices = vertices
+    return mesh
 
 
 def lower_bridge_vertices(mesh, bridge_pixel_boxes, step, bridge_height_mm):
@@ -432,6 +516,17 @@ def lower_bridge_vertices(mesh, bridge_pixel_boxes, step, bridge_height_mm):
     print(f"    Bridges are now solid from 0mm (bottom) to {bridge_height_mm}mm (top)")
 
     mesh.vertices = vertices
+
+    # Repair mesh to ensure it's still a valid volume after vertex modification
+    if not mesh.is_volume:
+        print(f"    Repairing mesh after vertex lowering...")
+        mesh.fill_holes()
+        mesh.update_faces(mesh.unique_faces())
+        mesh.update_faces(mesh.nondegenerate_faces())
+        trimesh.repair.fix_normals(mesh)
+        if not mesh.is_volume:
+            print(f"    WARNING: Mesh still not a volume after repair")
+
     return mesh
 
 
@@ -523,10 +618,12 @@ def process_country_with_islands(country_name, ne_path, dem_src, output_dir, ste
     labeled_smooth, num_smooth = label(dem_smooth > 0)
     print(f"  DEBUG: After smoothing, DEM has {num_smooth} separate land regions")
 
-    # Mark bridge zones AFTER smoothing to ensure they stay at low elevation
+    # DON'T mark bridges in DEM - they'll be created during vector clipping instead
+    # The bridge geometries are already part of country_geom (connected via buffer-unbuffer)
+    # Vector clipping will create the bridge corridors with smooth boundaries
     bridge_pixel_boxes = []
-    if bridge_geoms:
-        dem_smooth, bridge_pixel_boxes = mark_bridges_in_dem(dem_smooth, transform, bridge_geoms, bridge_height_mm)
+    # if bridge_geoms:
+    #     dem_smooth, bridge_pixel_boxes = mark_bridges_in_dem(dem_smooth, transform, bridge_geoms, bridge_height_mm)
 
     # DEBUG: Check regions after marking bridges (include sea level pixels)
     labeled_bridged, num_bridged = label(dem_smooth >= 0)
@@ -549,9 +646,27 @@ def process_country_with_islands(country_name, ne_path, dem_src, output_dir, ste
     solid = solidify_surface_mesh(surface, base_z_mm=0.0)
     print(f"    Solid: {len(solid.faces)} faces")
 
-    # Lower bridge vertices if we have bridges
-    if bridge_pixel_boxes:
-        solid = lower_bridge_vertices(solid, bridge_pixel_boxes, step, bridge_height_mm)
+    # Bridges are already at correct height from DEM elevation - no need to lower vertices
+
+    # Repair mesh to make it a valid volume (fill holes, fix normals)
+    if not solid.is_volume:
+        print(f"    Repairing mesh to make it a valid volume...")
+        solid.fill_holes()
+        solid.update_faces(solid.unique_faces())
+        solid.update_faces(solid.nondegenerate_faces())
+        trimesh.repair.fix_normals(solid)
+        trimesh.repair.fix_winding(solid)
+
+        # Try more aggressive repair: process=True
+        if not solid.is_volume:
+            print(f"    Trying aggressive repair (merge vertices, remove duplicates)...")
+            solid = trimesh.Trimesh(vertices=solid.vertices, faces=solid.faces, process=True)
+            solid.fix_normals()
+
+        if solid.is_volume:
+            print(f"    ✓ Mesh repaired successfully")
+        else:
+            print(f"    ⚠ Mesh still not a perfect volume, but proceeding anyway")
 
     # Vector clip - try to apply for smooth boundaries
     print("  Clipping to vector boundary...")
@@ -562,13 +677,40 @@ def process_country_with_islands(country_name, ne_path, dem_src, output_dir, ste
     if hasattr(country_geom_mm, 'geoms'):
         print(f"  DEBUG: Vector boundary has {len(list(country_geom_mm.geoms))} components")
 
-    # Only apply vector clip if we have a single polygon (bridges successfully merged)
-    if country_geom_mm.geom_type == 'Polygon':
+    # Handle GeometryCollection by extracting polygons
+    if country_geom_mm.geom_type == 'GeometryCollection':
+        from shapely.geometry import MultiPolygon as ShapelyMultiPolygon
+        polygons = [g for g in country_geom_mm.geoms if g.geom_type in ('Polygon', 'MultiPolygon')]
+        if len(polygons) == 1 and polygons[0].geom_type == 'Polygon':
+            country_geom_mm = polygons[0]
+        elif len(polygons) > 0:
+            # Flatten any MultiPolygons
+            all_polys = []
+            for p in polygons:
+                if p.geom_type == 'Polygon':
+                    all_polys.append(p)
+                else:
+                    all_polys.extend(list(p.geoms))
+            country_geom_mm = ShapelyMultiPolygon(all_polys) if len(all_polys) > 1 else all_polys[0]
+        print(f"  DEBUG: Extracted from GeometryCollection -> {country_geom_mm.geom_type}")
+
+    # Apply vector clip for Polygon or MultiPolygon (with islands)
+    if country_geom_mm.geom_type in ('Polygon', 'MultiPolygon'):
         solid = clip_mesh_to_vector_with_islands(solid, country_geom_mm)
         print(f"  ✓ Vector clip applied (smooth boundaries with connected islands)")
     else:
-        print(f"  ⚠ Skipping vector clip (MultiPolygon - bridges didn't merge, keeping DEM boundaries)")
+        print(f"  ⚠ Skipping vector clip (unsupported geometry type, keeping DEM boundaries)")
         print(f"  Note: Boundaries will be pixelated but all islands will be present")
+
+    # NOTE: We used to fix sea-level padding vertices here (raise 1.9mm to 2.0mm)
+    # But this creates flat artifacts in interior passages that are filled by buffer-unbuffer
+    # Better to leave them slightly recessed at 1.9mm so they're less visually prominent
+    # (These are areas where the polygon was buffered to fill gaps, but DEM has sea-level data)
+
+    # NOW lower bridge vertices (after vector clipping, when mesh is known to be valid)
+    if bridge_geoms:
+        print(f"  Lowering {len(bridge_geoms)} bridge regions to {bridge_height_mm}mm...")
+        solid = lower_bridge_vertices_from_geoms(solid, bridge_geoms, transform, bridge_height_mm)
 
     # DEBUG: Check mesh after vector clip
     bbox_clipped = solid.bounds

@@ -401,10 +401,89 @@ def cut_capital_star_hole(solid, capital_xy_mm):
         return solid
 
 
-def add_capital_star_extrusion(solid, capital_xy_mm, extrude_height_mm=STAR_EXTRUDE_HEIGHT_MM):
+def is_capital_near_border(capital_lat_lon, country_geom, threshold_km=50):
+    """
+    Detect if a capital is near a country border.
+
+    Args:
+        capital_lat_lon: (lon, lat) tuple of capital location in WGS84
+        country_geom: Shapely geometry of the country (in projected CRS, meters)
+        threshold_km: Distance threshold in km to consider "near border"
+
+    Returns:
+        True if capital is within threshold_km of the border
+    """
+    from shapely.geometry import Point
+    import geopandas as gpd
+
+    try:
+        # Create point in WGS84
+        capital_point_wgs84 = Point(capital_lat_lon)
+
+        # Transform capital to the same CRS as country_geom
+        # Assume country_geom is in a projected CRS (meters)
+        # We need to get its CRS, but since we don't have it here, we'll use geopandas
+        capital_gdf = gpd.GeoDataFrame([1], geometry=[capital_point_wgs84], crs="EPSG:4326")
+
+        # For the country geom, we need to infer if it's in degrees or meters
+        # Check the bounds - if values are small (< 200), likely degrees
+        bounds = country_geom.bounds
+        if max(abs(bounds[0]), abs(bounds[1]), abs(bounds[2]), abs(bounds[3])) < 200:
+            # Likely in degrees (WGS84), so capital is already in the right CRS
+            capital_point = capital_point_wgs84
+            distance_units_are_degrees = True
+        else:
+            # Geometry is in projected CRS (meters)
+            # We need to transform capital to match, but we don't know the CRS
+            # Use a rough approximation: meters at the capital's latitude
+            lon, lat = capital_lat_lon
+            meters_per_degree = 111000 * abs(np.cos(np.radians(lat)))
+            capital_x = (lon - bounds[0]) * meters_per_degree + bounds[0]
+            capital_y = (lat - bounds[1]) * meters_per_degree + bounds[1]
+            capital_point = Point(capital_x, capital_y)
+            distance_units_are_degrees = False
+
+        # Get the boundary (exterior ring) of the country
+        if country_geom.geom_type == 'Polygon':
+            boundary = country_geom.exterior
+        elif country_geom.geom_type == 'MultiPolygon':
+            # Use the boundary of the largest polygon
+            largest = max(country_geom.geoms, key=lambda p: p.area)
+            boundary = largest.exterior
+        else:
+            return False
+
+        # Calculate distance from capital to border
+        distance = capital_point.distance(boundary)
+
+        # Convert to km
+        if distance_units_are_degrees:
+            distance_km = distance * 111  # 1 degree ≈ 111 km
+        else:
+            distance_km = distance / 1000  # meters to km
+
+        is_near = distance_km <= threshold_km
+        if is_near:
+            print(f"    Capital is {distance_km:.1f} km from border (threshold: {threshold_km} km)")
+
+        return is_near
+
+    except Exception as e:
+        print(f"    WARNING: Border detection failed: {e}")
+        return False
+
+
+def add_capital_star_extrusion(solid, capital_xy_mm, extrude_height_mm=STAR_EXTRUDE_HEIGHT_MM, use_local_base=False):
     """
     Add an extruded star on top of the mesh at the capital location.
     This is more visible for edge capitals than cutting a hole.
+
+    Args:
+        solid: The mesh to add the star to
+        capital_xy_mm: (x, y) coordinates of capital in mm
+        extrude_height_mm: How much to extrude above terrain
+        use_local_base: If True, use local minimum height (for border capitals).
+                       If False, use global baseline (for coastal capitals).
     """
     if capital_xy_mm is None:
         return solid
@@ -429,8 +508,21 @@ def add_capital_star_extrusion(solid, capital_xy_mm, extrude_height_mm=STAR_EXTR
     # Get the maximum z height in the star region (top surface)
     top_z = np.max(vertices[nearby, 2])
 
-    # Get the minimum z of the entire mesh (bottom/baseline)
-    bottom_z = np.min(vertices[:, 2])
+    # Determine the base height for the star
+    if use_local_base:
+        # For border/coastal capitals: use local minimum to avoid deep pillars
+        local_bottom_z = np.min(vertices[nearby, 2])
+        # But ensure minimum height of 2mm from the base
+        global_bottom_z = np.min(vertices[:, 2])
+        min_height_from_base = 2.0  # mm
+
+        # Use local bottom, but not higher than (global_bottom + 2mm)
+        bottom_z = max(local_bottom_z, global_bottom_z + min_height_from_base)
+        base_type = "local base"
+    else:
+        # For coastal capitals: use global baseline to ensure full connection
+        bottom_z = np.min(vertices[:, 2])
+        base_type = "global baseline"
 
     try:
         # Calculate total height needed: from bottom to top + extrusion
@@ -446,7 +538,7 @@ def add_capital_star_extrusion(solid, capital_xy_mm, extrude_height_mm=STAR_EXTR
             print("    WARNING: Star extrusion union failed")
             return solid
 
-        print(f"    Star extruded at ({cx:.1f}, {cy:.1f}) mm, from baseline to +{extrude_height_mm:.1f}mm above terrain")
+        print(f"    Star extruded at ({cx:.1f}, {cy:.1f}) mm, from {base_type} to +{extrude_height_mm:.1f}mm above terrain")
         return result
     except Exception as e:
         print(f"    WARNING: Star extrusion failed ({e})")
@@ -655,8 +747,9 @@ def process_country(country_name, country_geom, dem_src, dem_transform, output_d
 
     # Add or cut capital star
     if extrude_star:
-        print("  Extruding capital star...")
-        solid = add_capital_star_extrusion(solid, capital_xy_mm)
+        # Always use local base for extruded stars to avoid deep pillars
+        print("  Extruding capital star (using local base)...")
+        solid = add_capital_star_extrusion(solid, capital_xy_mm, use_local_base=True)
     else:
         print("  Cutting capital star...")
         solid = cut_capital_star_hole(solid, capital_xy_mm)

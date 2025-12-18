@@ -64,6 +64,7 @@ CAPITALS.update({
     "Central African Republic": ("Bangui", 18.5550, 4.3947),
     "Chad": ("N'Djamena", 15.0444, 12.1348),
     "Congo": ("Brazzaville", 15.2663, -4.2634),
+    "Republic of the Congo": ("Brazzaville", 15.2663, -4.2634),  # Alias for Natural Earth
     "Democratic Republic of the Congo": ("Kinshasa", 15.3222, -4.3369),
     "Djibouti": ("Djibouti", 43.1456, 11.5720),
     "Egypt": ("Cairo", 31.2357, 30.0444),
@@ -98,6 +99,7 @@ CAPITALS.update({
     "South Sudan": ("Juba", 31.5825, 4.8594),
     "Sudan": ("Khartoum", 32.5599, 15.5007),
     "Tanzania": ("Dodoma", 35.7382, -6.1630),
+    "United Republic of Tanzania": ("Dodoma", 35.7382, -6.1630),  # Alias for Natural Earth
     "Togo": ("Lomé", 1.2255, 6.1256),
     "Tunisia": ("Tunis", 10.1658, 36.8065),
     "Uganda": ("Kampala", 32.5825, 0.3476),
@@ -105,15 +107,14 @@ CAPITALS.update({
     "Zimbabwe": ("Harare", 31.0539, -17.8252),
 })
 
-# Coastal capitals that should use extruded stars (to avoid cutting through edges)
-# Only capitals that are actually ON the coast or very close to it
+# Capitals that should use extruded stars (to avoid cutting through edges)
+# Includes both coastal capitals AND border capitals
 COASTAL_CAPITALS = {
+    # Coastal capitals (on ocean/sea coast)
     "Algeria",           # Algiers - directly on Mediterranean coast
     "Angola",            # Luanda - directly on Atlantic coast
     "Benin",             # Porto-Novo - very close to coast
-    "Congo",             # Brazzaville - on Congo River near coast
     "Djibouti",          # Djibouti - directly on Red Sea coast
-    "Egypt",             # Cairo - near Nile delta, close to coast
     "Equatorial Guinea", # Malabo - on island in ocean
     "Gabon",             # Libreville - directly on Atlantic coast
     "Gambia",            # Banjul - directly on Atlantic coast
@@ -130,6 +131,11 @@ COASTAL_CAPITALS = {
     "Somalia",           # Mogadishu - directly on Indian Ocean coast
     "Togo",              # Lomé - directly on Atlantic coast
     "Tunisia",           # Tunis - very close to Mediterranean coast
+
+    # Border capitals (near international borders - will use local base)
+    "Republic of the Congo",  # Brazzaville - on DRC border
+    "Democratic Republic of the Congo",  # Kinshasa - on ROC border (across river from Brazzaville)
+    "Chad",  # N'Djamena - on Cameroon border
 }
 
 

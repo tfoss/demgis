@@ -1,7 +1,8 @@
 """
-Batch process Central American countries with consistent boundary smoothing.
+Batch process Middle East countries with consistent boundary smoothing.
 
-Uses the same approach as South America but filters for Central American countries.
+NOTE: Currently uses Africa 2km DEM which covers Egypt and some nearby regions.
+For full Middle East coverage, you'll need to build a separate Middle East DEM.
 """
 
 import sys
@@ -11,47 +12,41 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 from make_all_sa_with_vector_clip import *
 
-# Override the load function to filter Central American countries
-CENTRAL_AMERICAN_COUNTRIES = [
-    "Belize",
-    "Costa Rica",
-    "El Salvador",
-    "Guatemala",
-    "Honduras",
-    "Nicaragua",
-    "Panama",
-    "Mexico",  # Comment out if you don't want Mexico
+
+# Middle East countries (limited to those covered by Africa DEM for now)
+MIDDLE_EAST_COUNTRIES = [
+    "Egypt",          # Fully covered by Africa DEM
+    "Israel",         # Covered by Africa DEM
+    "Palestine",      # Covered by Africa DEM
+    "Jordan",         # Covered by Africa DEM
+    "Lebanon",        # Covered by Africa DEM
+    "Syria",          # Covered by Africa DEM
+    # Countries below need Middle East/Asia DEM (not yet built):
+    # "Saudi Arabia", "Yemen", "Oman", "United Arab Emirates", "Qatar",
+    # "Bahrain", "Kuwait", "Iraq", "Iran", "Turkey", "Cyprus"
 ]
 
-# Caribbean countries (optional - comment out if not wanted)
-CARIBBEAN_COUNTRIES = [
-    "Cuba",
-    "Jamaica",
-    "Haiti",
-    "Dominican Republic",
-    "Bahamas",
-    "Trinidad and Tobago",
-    "Puerto Rico",  # May not be separate in Natural Earth
-]
 
-# Combine the lists you want
-COUNTRIES_TO_INCLUDE = CENTRAL_AMERICAN_COUNTRIES  # + CARIBBEAN_COUNTRIES
-
-
-def load_and_simplify_countries_ca(ne_path, dem_crs):
+def load_and_simplify_countries_me(ne_path, dem_crs):
     """
-    Load Central American countries and apply consistent simplification.
+    Load Middle East countries and apply consistent simplification.
+    Takes only mainland (largest polygon) for countries with islands.
     """
     gdf = gpd.read_file(ne_path)
 
     # Filter to our list of countries
-    ca = gdf[gdf["ADMIN"].isin(COUNTRIES_TO_INCLUDE)]
+    me = gdf[gdf["ADMIN"].isin(MIDDLE_EAST_COUNTRIES)]
 
     countries = {}
 
-    for _, row in ca.iterrows():
+    for _, row in me.iterrows():
         country_name = row["ADMIN"]
         geom = row.geometry
+
+        # If MultiPolygon, take only the largest (mainland)
+        if geom.geom_type == 'MultiPolygon':
+            geom = max(geom.geoms, key=lambda p: p.area)
+            print(f"  {country_name}: MultiPolygon detected, using mainland only")
 
         if VECTOR_SIMPLIFY_DEGREES > 0:
             geom_series = gpd.GeoSeries([geom], crs=gdf.crs)
@@ -69,36 +64,48 @@ def load_and_simplify_countries_ca(ne_path, dem_crs):
     return countries
 
 
-# Add Central American capitals
+# Middle East capitals
 CAPITALS.update({
-    "Belize": ("Belmopan", -88.4976, 17.2510),
-    "Costa Rica": ("San José", -84.0907, 9.9281),
-    "El Salvador": ("San Salvador", -89.2182, 13.6929),
-    "Guatemala": ("Guatemala City", -90.5069, 14.6349),
-    "Honduras": ("Tegucigalpa", -87.2068, 14.0723),
-    "Nicaragua": ("Managua", -86.2362, 12.1150),
-    "Panama": ("Panama City", -79.5188, 8.9824),
-    "Mexico": ("Mexico City", -99.1332, 19.4326),
-    "Cuba": ("Havana", -82.3666, 23.1136),
-    "Jamaica": ("Kingston", -76.7936, 18.0179),
-    "Haiti": ("Port-au-Prince", -72.3074, 18.5944),
-    "Dominican Republic": ("Santo Domingo", -69.9312, 18.4861),
-    "Bahamas": ("Nassau", -77.3963, 25.0343),
-    "Trinidad and Tobago": ("Port of Spain", -61.5171, 10.6918),
+    "Egypt": ("Cairo", 31.2357, 30.0444),
+    "Israel": ("Jerusalem", 35.2137, 31.7683),
+    "Palestine": ("Ramallah", 35.2063, 31.9038),  # De facto administrative capital
+    "Jordan": ("Amman", 35.9450, 31.9539),
+    "Lebanon": ("Beirut", 35.5093, 33.8886),
+    "Syria": ("Damascus", 36.2765, 33.5138),
+    "Saudi Arabia": ("Riyadh", 46.7219, 24.7136),
+    "Yemen": ("Sana'a", 44.2075, 15.3694),
+    "Oman": ("Muscat", 58.4059, 23.6100),
+    "United Arab Emirates": ("Abu Dhabi", 54.3773, 24.4539),
+    "Qatar": ("Doha", 51.5310, 25.2854),
+    "Bahrain": ("Manama", 50.5577, 26.2285),
+    "Kuwait": ("Kuwait City", 47.9774, 29.3759),
+    "Iraq": ("Baghdad", 44.3661, 33.3152),
+    "Iran": ("Tehran", 51.4231, 35.6892),
+    "Turkey": ("Ankara", 32.8597, 39.9334),
+    "Cyprus": ("Nicosia", 33.3823, 35.1856),
 })
 
 # Coastal capitals that should use extruded stars
 COASTAL_CAPITALS = {
-    "Panama",  # Panama City - directly on Pacific coast
-    "Belize",  # Belmopan - very close to coast
+    "Egypt",  # Cairo - near coast/Nile delta
+    "Israel",  # Tel Aviv area (though Jerusalem is inland, it's close to coast)
+    "Lebanon",  # Beirut - directly on Mediterranean coast
+    "Syria",  # Damascus - close to Lebanon border
+    "Yemen",  # Sana'a elevated but coastal lowlands
+    "United Arab Emirates",  # Abu Dhabi - on coast
+    "Qatar",  # Doha - on coast
+    "Bahrain",  # Manama - island nation
+    "Kuwait",  # Kuwait City - on coast
+    "Oman",  # Muscat - on coast
+    "Cyprus",  # Nicosia - island (though capital is inland)
 }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate Central American country STLs")
-    parser.add_argument("--dem", required=True, help="Central America DEM (e.g. ca_1km_smooth.tif)")
+    parser = argparse.ArgumentParser(description="Generate Middle East country STLs")
+    parser.add_argument("--dem", required=True, help="DEM file (e.g. africa_2km_smooth_aea.tif)")
     parser.add_argument("--ne", required=True, help="Natural Earth admin0 shapefile")
-    parser.add_argument("--output-dir", default="STLs_CentralAmerica")
+    parser.add_argument("--output-dir", default="STLs_MiddleEast")
     parser.add_argument("--step", type=int, default=XY_STEP)
     parser.add_argument("--target-faces", type=int, default=TARGET_FACES)
     parser.add_argument("--countries", nargs="+", help="Specific countries to process")
@@ -116,8 +123,9 @@ def main():
     dem_src = rasterio.open(args.dem)
     dem_crs = dem_src.crs
 
-    print(f"\nLoading Central American countries (VECTOR_SIMPLIFY_DEGREES={VECTOR_SIMPLIFY_DEGREES})...")
-    countries = load_and_simplify_countries_ca(args.ne, dem_crs)
+    print(f"\nLoading Middle East countries (VECTOR_SIMPLIFY_DEGREES={VECTOR_SIMPLIFY_DEGREES})...")
+    print("Note: Currently limited to countries covered by the DEM")
+    countries = load_and_simplify_countries_me(args.ne, dem_crs)
 
     if args.countries:
         countries = {k: v for k, v in countries.items() if k in args.countries}

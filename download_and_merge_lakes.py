@@ -126,13 +126,41 @@ def merge_countries_with_lakes(countries_path, lakes_path, output_path, min_lake
     # Create new GeoDataFrame
     result_gdf = gpd.GeoDataFrame(countries_with_lakes, crs=countries.crs)
 
-    # Filter out any non-polygon geometries that might have been created
-    print(f"\nFiltering geometries...")
+    # Extract polygons from GeometryCollections and filter out non-polygons
+    print(f"\nProcessing geometries...")
     before_count = len(result_gdf)
-    result_gdf = result_gdf[result_gdf.geometry.apply(lambda g: g.geom_type in ('Polygon', 'MultiPolygon'))]
+
+    def extract_polygons(geom):
+        """Extract Polygon/MultiPolygon from a geometry, including from GeometryCollections."""
+        from shapely.geometry import GeometryCollection
+
+        if geom.geom_type in ('Polygon', 'MultiPolygon'):
+            return geom
+        elif geom.geom_type == 'GeometryCollection':
+            # Extract only Polygon/MultiPolygon parts
+            polygons = [g for g in geom.geoms if g.geom_type in ('Polygon', 'MultiPolygon')]
+            if len(polygons) == 0:
+                return None
+            elif len(polygons) == 1:
+                return polygons[0]
+            else:
+                # Flatten into a single MultiPolygon
+                all_polys = []
+                for p in polygons:
+                    if p.geom_type == 'Polygon':
+                        all_polys.append(p)
+                    else:  # MultiPolygon
+                        all_polys.extend(list(p.geoms))
+                return MultiPolygon(all_polys)
+        else:
+            return None
+
+    result_gdf['geometry'] = result_gdf.geometry.apply(extract_polygons)
+    result_gdf = result_gdf[result_gdf.geometry.notna()]
+
     after_count = len(result_gdf)
     if before_count != after_count:
-        print(f"  Removed {before_count - after_count} non-polygon geometries")
+        print(f"  Removed {before_count - after_count} countries with invalid geometries")
 
     # Save
     print(f"Saving to {output_path}...")
