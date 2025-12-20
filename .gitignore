@@ -3,6 +3,24 @@
 *.tiff
 *.stl
 *.vrt
+*.png
 .DS_Store
 country_dems/
 __pycache__/
+
+# Output directories
+STLs_*/
+
+# Data directories (large files, shouldn't be in repo)
+data/ne/*.shp
+data/ne/*.shx
+data/ne/*.dbf
+data/ne/*.prj
+data/ne/*.cpg
+data/ne/*.zip
+data/ne/*.html
+data/ne/*.txt
+
+# Tile lists (generated, can be recreated)
+*_tile_urls_s3.txt
+tileList.txt
