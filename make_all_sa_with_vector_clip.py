@@ -620,13 +620,10 @@ def cut_lakes_from_mesh(solid, country_geom, dem_transform, min_lake_area_km2=MI
 
 
 def get_country_geom_in_mm(country_geom, dem_transform, step):
-    """Convert country geometry from CRS to mm coordinates."""
+    """Convert country geometry from CRS to mm coordinates. Preserves MultiPolygon."""
     from shapely.ops import transform as shapely_transform
     from shapely.validation import make_valid
-
-    # Handle MultiPolygon BEFORE transformation
-    if country_geom.geom_type == 'MultiPolygon':
-        country_geom = max(country_geom.geoms, key=lambda p: p.area)
+    from shapely.geometry import MultiPolygon
 
     def crs_to_mm(x, y):
         rows, cols = rowcol(dem_transform, x, y)
@@ -644,12 +641,17 @@ def get_country_geom_in_mm(country_geom, dem_transform, step):
     if geom_mm.geom_type == 'GeometryCollection':
         polys = [g for g in geom_mm.geoms if g.geom_type in ('Polygon', 'MultiPolygon')]
         if polys:
-            geom_mm = max(polys, key=lambda p: p.area)
-            if geom_mm.geom_type == 'MultiPolygon':
-                geom_mm = max(geom_mm.geoms, key=lambda p: p.area)
-
-    if geom_mm.geom_type == 'MultiPolygon':
-        geom_mm = max(geom_mm.geoms, key=lambda p: p.area)
+            # If we have multiple polygons, combine them into a MultiPolygon
+            all_polys = []
+            for p in polys:
+                if p.geom_type == 'Polygon':
+                    all_polys.append(p)
+                elif p.geom_type == 'MultiPolygon':
+                    all_polys.extend(p.geoms)
+            if len(all_polys) == 1:
+                geom_mm = all_polys[0]
+            else:
+                geom_mm = MultiPolygon(all_polys)
 
     return geom_mm
 
@@ -657,49 +659,89 @@ def get_country_geom_in_mm(country_geom, dem_transform, step):
 def clip_mesh_to_vector(solid, country_geom_mm):
     """
     Boolean intersect mesh with extruded country polygon for smooth boundaries.
-    Uses robust extrusion method.
+    Uses robust extrusion method. Handles MultiPolygon by creating separate cutters.
     """
     from shapely.validation import make_valid
 
-    # Validate and extract single polygon
+    # Validate geometry
     if not country_geom_mm.is_valid:
         country_geom_mm = make_valid(country_geom_mm)
 
+    # Get all polygons (handle both Polygon and MultiPolygon)
     if country_geom_mm.geom_type == 'MultiPolygon':
-        country_geom_mm = max(country_geom_mm.geoms, key=lambda p: p.area)
-        print("    MultiPolygon detected, using largest part")
+        polygons = list(country_geom_mm.geoms)
+        print(f"    Clipping to MultiPolygon with {len(polygons)} components")
+    else:
+        polygons = [country_geom_mm]
 
-    if not hasattr(country_geom_mm, 'exterior'):
-        print(f"    WARNING: Invalid geometry type {country_geom_mm.geom_type}, skipping vector clip")
+    # Create a cutter for each polygon component
+    zmin, zmax = solid.bounds[:, 2]
+    height = (zmax - zmin) + 4.0
+
+    cutters = []
+    for i, poly in enumerate(polygons):
+        if not hasattr(poly, 'exterior'):
+            print(f"    WARNING: Component {i} has invalid geometry type {poly.geom_type}, skipping")
+            continue
+
+        # Skip very small polygons (< 10 vertices) as they can cause union issues
+        num_vertices = len(poly.exterior.coords)
+        if num_vertices < 10:
+            print(f"    Skipping tiny polygon {i} ({num_vertices} vertices) - likely artifact")
+            continue
+
+        try:
+            if len(polygons) > 1:
+                print(f"    Extruding polygon {i} with {num_vertices} vertices...")
+            else:
+                print(f"    Extruding polygon with {num_vertices} vertices...")
+            cutter = robust_extrude_polygon(poly, height)
+            cutter.apply_translation([0, 0, zmin - 1.0])
+
+            if not cutter.is_volume:
+                print(f"    WARNING: Cutter {i} is not a volume, skipping")
+                continue
+
+            cutters.append(cutter)
+        except Exception as e:
+            print(f"    WARNING: Failed to extrude component {i}: {e}")
+            continue
+
+    if not cutters:
+        print("    WARNING: No valid cutters created, skipping vector clip")
         return solid
 
-    try:
-        # Use robust extrusion
-        zmin, zmax = solid.bounds[:, 2]
-        height = (zmax - zmin) + 4.0
+    # Union all cutters into single mesh
+    if len(cutters) == 1:
+        combined_cutter = cutters[0]
+        print(f"    Cutter: {len(combined_cutter.vertices)} verts, {len(combined_cutter.faces)} faces, is_volume={combined_cutter.is_volume}")
+    else:
+        print(f"    Combining {len(cutters)} cutters...")
+        combined_cutter = cutters[0]
+        for cutter in cutters[1:]:
+            combined_cutter = combined_cutter.union(cutter, engine='manifold')
+        print(f"    Combined cutter: {len(combined_cutter.vertices)} verts, {len(combined_cutter.faces)} faces")
 
-        print(f"    Extruding polygon with {len(country_geom_mm.exterior.coords)} vertices...")
-        cutter = robust_extrude_polygon(country_geom_mm, height)
-        cutter.apply_translation([0, 0, zmin - 1.0])
-
-        print(f"    Cutter: {len(cutter.vertices)} verts, {len(cutter.faces)} faces, is_volume={cutter.is_volume}")
-
-        if not cutter.is_volume:
-            print(f"    WARNING: Cutter not watertight, skipping vector clip")
+    # Verify combined cutter is a volume before intersection
+    if not combined_cutter.is_volume:
+        print(f"    WARNING: Combined cutter is not a volume, attempting repair...")
+        combined_cutter.fill_holes()
+        combined_cutter.update_faces(combined_cutter.unique_faces())
+        trimesh.repair.fix_normals(combined_cutter)
+        if not combined_cutter.is_volume:
+            print(f"    WARNING: Cutter still not a volume after repair, skipping vector clip")
             return solid
 
-        # Boolean intersection
-        result = solid.intersection(cutter)
-
+    # Perform the intersection
+    try:
+        result = solid.intersection(combined_cutter, engine='manifold')
         if result is None or len(result.faces) == 0:
             print("    WARNING: Vector clip returned empty, using original")
             return solid
-
         print(f"    Vector clip: {len(solid.faces)} -> {len(result.faces)} faces")
         return result
-
     except Exception as e:
-        print(f"    WARNING: Vector clip failed ({e}), using original")
+        print(f"    WARNING: Vector clip failed: {e}")
         return solid
 
 

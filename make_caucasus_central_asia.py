@@ -56,10 +56,18 @@ def load_and_simplify_countries_cca(ne_path, dem_crs):
         country_name = row["ADMIN"]
         geom = row.geometry
 
-        # If MultiPolygon, take only the largest (mainland)
+        # If MultiPolygon, handle special cases
         if geom.geom_type == 'MultiPolygon':
-            geom = max(geom.geoms, key=lambda p: p.area)
-            print(f"  {country_name}: MultiPolygon detected, using mainland only")
+            if country_name == "Azerbaijan":
+                # Keep both main territory and Nakhchivan exclave (2 largest polygons)
+                from shapely.geometry import MultiPolygon
+                polys = sorted(geom.geoms, key=lambda p: p.area, reverse=True)
+                geom = MultiPolygon([polys[0], polys[1]])
+                print(f"  {country_name}: MultiPolygon detected, keeping mainland + Nakhchivan exclave")
+            else:
+                # For other countries, take only the largest (mainland)
+                geom = max(geom.geoms, key=lambda p: p.area)
+                print(f"  {country_name}: MultiPolygon detected, using mainland only")
 
         # Remove interior rings (holes) for Kazakhstan to fill Baikonur lease area
         if country_name == "Kazakhstan" and geom.geom_type == 'Polygon':
