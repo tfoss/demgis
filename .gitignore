@@ -24,3 +24,7 @@ data/ne/*.txt
 # Tile lists (generated, can be recreated)
 *_tile_urls_s3.txt
 tileList.txt
+
+# Tile directories (large DEM files)
+caucasus_tiles/
+asia_tiles/
