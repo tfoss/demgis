@@ -1,8 +1,8 @@
 """
-Batch process Middle East countries with consistent boundary smoothing.
+Batch process Middle East countries with 2km DEM resolution.
 
-NOTE: Currently uses Africa 2km DEM which covers Egypt and some nearby regions.
-For full Middle East coverage, you'll need to build a separate Middle East DEM.
+This version uses 2km DEM and doubles XY_MM_PER_PIXEL to maintain
+the same physical print size as 1km version (same scale as Africa/Americas).
 """
 
 import sys
@@ -12,18 +12,36 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 from make_all_sa_with_vector_clip import *
 
+# Override XY_MM_PER_PIXEL to compensate for 2x pixel size
+# This ensures the same physical dimensions as 1km version
+import make_all_sa_with_vector_clip as sa_module
+sa_module.XY_MM_PER_PIXEL = 0.50  # Double the standard 0.25 for 2km pixels
 
-# Middle East countries (limited to those covered by Africa DEM for now)
+# Re-import the module-level constant into local scope
+XY_MM_PER_PIXEL = 0.50
+
+
+# Middle East countries
 MIDDLE_EAST_COUNTRIES = [
-    "Egypt",          # Fully covered by Africa DEM
-    "Israel",         # Covered by Africa DEM
-    "Palestine",      # Covered by Africa DEM
-    "Jordan",         # Covered by Africa DEM
-    "Lebanon",        # Covered by Africa DEM
-    "Syria",          # Covered by Africa DEM
-    # Countries below need Middle East/Asia DEM (not yet built):
-    # "Saudi Arabia", "Yemen", "Oman", "United Arab Emirates", "Qatar",
-    # "Bahrain", "Kuwait", "Iraq", "Iran", "Turkey", "Cyprus"
+    # Levant
+    "Egypt",
+    "Israel",
+    "Palestine",
+    "Jordan",
+    "Lebanon",
+    "Syria",
+    # Arabian Peninsula (requires Asia DEM)
+    "Saudi Arabia",
+    "Yemen",
+    "Oman",
+    "United Arab Emirates",
+    "Qatar",
+    "Bahrain",
+    "Kuwait",
+    # Mesopotamia (requires Asia DEM)
+    "Iraq",
+    "Iran",
+    # Note: Turkey, Cyprus require broader Asia coverage
 ]
 
 
@@ -91,8 +109,7 @@ COASTAL_CAPITALS = {
     "Israel",  # Tel Aviv area (though Jerusalem is inland, it's close to coast)
     "Lebanon",  # Beirut - directly on Mediterranean coast
     "Syria",  # Damascus - close to Lebanon border
-    "Yemen",  # Sana'a elevated but coastal lowlands
-    "United Arab Emirates",  # Abu Dhabi - on coast
+    "United Arab Emirates",  # Abu Dhabi - on separate island, extruded star will be separate piece
     "Qatar",  # Doha - on coast
     "Bahrain",  # Manama - island nation
     "Kuwait",  # Kuwait City - on coast
