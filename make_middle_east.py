@@ -12,17 +12,30 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 from make_all_sa_with_vector_clip import *
 
-# Override XY_MM_PER_PIXEL to compensate for 2x pixel size
-# This ensures the same physical dimensions as 1km version
+# Override parameters for 1km DEM (matching Africa settings exactly)
 import make_all_sa_with_vector_clip as sa_module
-sa_module.XY_MM_PER_PIXEL = 0.50  # Double the standard 0.25 for 2km pixels
+sa_module.XY_MM_PER_PIXEL = 0.25  # Standard for 1km pixels
 
-# Re-import the module-level constant into local scope
-XY_MM_PER_PIXEL = 0.50
+# Use Africa's simplification settings for smooth boundaries
+# 0.02 degrees ≈ 2.2km at this latitude - creates smoother polygons
+sa_module.VECTOR_SIMPLIFY_DEGREES = 0.02
+
+# Use standard smoothing that works well for 1km Africa DEMs
+sa_module.MASK_SMOOTH_SIGMA_PIX = 10.0
+
+# Re-import the module-level constants into local scope
+XY_MM_PER_PIXEL = 0.25
+VECTOR_SIMPLIFY_DEGREES = 0.02
+MASK_SMOOTH_SIGMA_PIX = 10.0
 
 
-# Middle East countries
+# Middle East and Caucasus countries
+# Using unified Middle East DEM centered at 48°E covering the entire region
 MIDDLE_EAST_COUNTRIES = [
+    # Caucasus
+    "Armenia",
+    "Azerbaijan",
+    "Georgia",
     # Levant
     "Egypt",
     "Israel",
@@ -30,7 +43,7 @@ MIDDLE_EAST_COUNTRIES = [
     "Jordan",
     "Lebanon",
     "Syria",
-    # Arabian Peninsula (requires Asia DEM)
+    # Arabian Peninsula
     "Saudi Arabia",
     "Yemen",
     "Oman",
@@ -38,7 +51,7 @@ MIDDLE_EAST_COUNTRIES = [
     "Qatar",
     "Bahrain",
     "Kuwait",
-    # Mesopotamia (requires Asia DEM)
+    # Mesopotamia
     "Iraq",
     "Iran",
     # Note: Turkey, Cyprus require broader Asia coverage
@@ -61,10 +74,18 @@ def load_and_simplify_countries_me(ne_path, dem_crs):
         country_name = row["ADMIN"]
         geom = row.geometry
 
-        # If MultiPolygon, take only the largest (mainland)
+        # If MultiPolygon, handle special cases
         if geom.geom_type == 'MultiPolygon':
-            geom = max(geom.geoms, key=lambda p: p.area)
-            print(f"  {country_name}: MultiPolygon detected, using mainland only")
+            if country_name == "Azerbaijan":
+                # Keep both main territory and Nakhchivan exclave (2 largest polygons)
+                from shapely.geometry import MultiPolygon
+                polys = sorted(geom.geoms, key=lambda p: p.area, reverse=True)
+                geom = MultiPolygon([polys[0], polys[1]])
+                print(f"  {country_name}: MultiPolygon detected, keeping mainland + Nakhchivan exclave")
+            else:
+                # For other countries, take only the largest (mainland)
+                geom = max(geom.geoms, key=lambda p: p.area)
+                print(f"  {country_name}: MultiPolygon detected, using mainland only")
 
         if VECTOR_SIMPLIFY_DEGREES > 0:
             geom_series = gpd.GeoSeries([geom], crs=gdf.crs)
@@ -82,8 +103,13 @@ def load_and_simplify_countries_me(ne_path, dem_crs):
     return countries
 
 
-# Middle East capitals
+# Middle East and Caucasus capitals
 CAPITALS.update({
+    # Caucasus
+    "Georgia": ("Tbilisi", 44.7833, 41.7151),
+    "Armenia": ("Yerevan", 44.5152, 40.1872),
+    "Azerbaijan": ("Baku", 49.8822, 40.4093),
+    # Middle East
     "Egypt": ("Cairo", 31.2357, 30.0444),
     "Israel": ("Jerusalem", 35.2137, 31.7683),
     "Palestine": ("Ramallah", 35.2063, 31.9038),  # De facto administrative capital
