@@ -12,19 +12,19 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 from make_all_sa_with_vector_clip import *
 
-# Override parameters for 1km DEM (matching Africa settings exactly)
+# Override parameters for 2km DEM
 import make_all_sa_with_vector_clip as sa_module
-sa_module.XY_MM_PER_PIXEL = 0.25  # Standard for 1km pixels
+sa_module.XY_MM_PER_PIXEL = 0.50  # Double for 2km pixels to maintain same physical size
 
-# Use Africa's simplification settings for smooth boundaries
+# Use smoothing settings that work well for 2km DEMs
 # 0.02 degrees ≈ 2.2km at this latitude - creates smoother polygons
 sa_module.VECTOR_SIMPLIFY_DEGREES = 0.02
 
-# Use standard smoothing that works well for 1km Africa DEMs
+# Use standard smoothing that works well for 2km DEMs
 sa_module.MASK_SMOOTH_SIGMA_PIX = 10.0
 
 # Re-import the module-level constants into local scope
-XY_MM_PER_PIXEL = 0.25
+XY_MM_PER_PIXEL = 0.50
 VECTOR_SIMPLIFY_DEGREES = 0.02
 MASK_SMOOTH_SIGMA_PIX = 10.0
 
@@ -158,6 +158,7 @@ def main():
                         help="Remove large lakes as holes in the mesh")
     parser.add_argument("--min-lake-area", type=float, default=MIN_LAKE_AREA_KM2,
                         help=f"Minimum lake area in km² to remove (default: {MIN_LAKE_AREA_KM2})")
+    parser.add_argument("--save-png", action="store_true", help="Save a PNG of the DEM")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -193,7 +194,8 @@ def main():
                           args.output_dir, args.step, target_faces,
                           extrude_star=use_extruded_star,
                           remove_lakes=args.remove_lakes,
-                          min_lake_area_km2=args.min_lake_area)
+                          min_lake_area_km2=args.min_lake_area,
+                          save_png=args.save_png)
         except Exception as e:
             print(f"\nERROR: {country_name}: {e}")
             import traceback
