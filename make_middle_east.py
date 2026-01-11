@@ -77,13 +77,23 @@ def load_and_simplify_countries_me(ne_path, dem_crs):
         # If MultiPolygon, handle special cases
         if geom.geom_type == "MultiPolygon":
             if country_name == "Azerbaijan":
-                # Keep both main territory and Nakhchivan exclave (2 largest polygons)
+                # Keep mainland (largest), Nakhchivan exclave (2nd largest),
+                # AND all eastern polygons (Absheron Peninsula near Baku at 50°E+)
                 from shapely.geometry import MultiPolygon
 
                 polys = sorted(geom.geoms, key=lambda p: p.area, reverse=True)
-                geom = MultiPolygon([polys[0], polys[1]])
+
+                # Start with 2 largest (mainland + Nakhchivan)
+                keep_polys = [polys[0], polys[1]]
+
+                # Add all polygons with centroids east of 50°E (Absheron Peninsula)
+                for poly in polys[2:]:
+                    if poly.centroid.x >= 50.0:
+                        keep_polys.append(poly)
+
+                geom = MultiPolygon(keep_polys)
                 print(
-                    f"  {country_name}: MultiPolygon detected, keeping mainland + Nakhchivan exclave"
+                    f"  {country_name}: MultiPolygon detected, keeping {len(keep_polys)} polygons (mainland + Nakhchivan + eastern territory)"
                 )
             else:
                 # For other countries, take only the largest (mainland)
