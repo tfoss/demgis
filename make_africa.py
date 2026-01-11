@@ -153,6 +153,7 @@ def main():
                         help="Remove large lakes as holes in the mesh")
     parser.add_argument("--min-lake-area", type=float, default=MIN_LAKE_AREA_KM2,
                         help=f"Minimum lake area in km² to remove (default: {MIN_LAKE_AREA_KM2})")
+    parser.add_argument("--save-png", action="store_true", help="Save a PNG of the DEM")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -188,7 +189,8 @@ def main():
                           args.output_dir, args.step, target_faces,
                           extrude_star=use_extruded_star,
                           remove_lakes=args.remove_lakes,
-                          min_lake_area_km2=args.min_lake_area)
+                          min_lake_area_km2=args.min_lake_area,
+                          save_png=args.save_png)
         except Exception as e:
             print(f"\nERROR: {country_name}: {e}")
             import traceback

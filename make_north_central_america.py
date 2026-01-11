@@ -94,6 +94,7 @@ def main():
     parser.add_argument("--step", type=int, default=XY_STEP)
     parser.add_argument("--target-faces", type=int, default=TARGET_FACES)
     parser.add_argument("--countries", nargs="+", help="Specific countries to process")
+    parser.add_argument("--save-png", action="store_true", help="Save a PNG of the DEM")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -116,7 +117,8 @@ def main():
     for country_name, country_geom in countries.items():
         try:
             process_country(country_name, country_geom, dem_src, dem_src.transform,
-                          args.output_dir, args.step, target_faces)
+                          args.output_dir, args.step, target_faces,
+                          save_png=args.save_png)
         except Exception as e:
             print(f"\nERROR: {country_name}: {e}")
             import traceback
