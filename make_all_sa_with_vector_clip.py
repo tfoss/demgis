@@ -7,14 +7,15 @@ clip works for all countries.
 
 import argparse
 import os
+
+import geopandas as gpd
 import numpy as np
 import rasterio
-from rasterio.mask import mask
-import geopandas as gpd
-import trimesh
-from scipy.ndimage import gaussian_filter, label
-from rasterio.transform import rowcol
 import shapely.geometry as geom
+import trimesh
+from rasterio.mask import mask
+from rasterio.transform import rowcol
+from scipy.ndimage import gaussian_filter, label
 from shapely.geometry import Point, Polygon, box
 from shapely.ops import unary_union
 
@@ -25,7 +26,9 @@ SEA_LEVEL_M = 0.0
 SEA_PADDING_M = -50.0
 BASE_THICKNESS_MM = 2.0
 Z_SCALE_MM_PER_M = 0.0020
-MIN_COMPONENT_PIXELS = 1000  # Lowered from 2000 to support small territories like Palestine
+MIN_COMPONENT_PIXELS = (
+    1000  # Lowered from 2000 to support small territories like Palestine
+)
 
 XY_STEP = 3
 XY_MM_PER_PIXEL = 0.25
@@ -39,7 +42,9 @@ VECTOR_SIMPLIFY_DEGREES = 0.02
 STAR_RADIUS_MM = 6.0
 STAR_INNER_RATIO = 0.5
 STAR_POINTS = 4
-STAR_EXTRUDE_HEIGHT_MM = 2.0  # Height to extrude star above surface (when using --extrude-star)
+STAR_EXTRUDE_HEIGHT_MM = (
+    2.0  # Height to extrude star above surface (when using --extrude-star)
+)
 
 # Lake removal (optional feature via --remove-lakes)
 MIN_LAKE_AREA_KM2 = 100.0  # Remove lakes larger than this (as holes in the mesh)
@@ -63,53 +68,48 @@ CAPITALS = {
 
 def robust_extrude_polygon(polygon, height):
     """
-    More robust polygon extrusion that ensures watertight mesh.
+    Robust polygon extrusion using trimesh's built-in extrusion.
 
-    Instead of using trimesh.creation.extrude_polygon which can fail,
-    we manually build the extruded mesh with careful vertex ordering.
+    This properly handles concave polygons and creates watertight meshes.
     """
-    # Get exterior coordinates
-    coords = np.array(polygon.exterior.coords[:-1])  # Remove duplicate last point
-    n_points = len(coords)
+    from shapely.validation import make_valid
 
-    # Create vertices: bottom ring, then top ring
-    bottom_verts = np.column_stack([coords, np.zeros(n_points)])
-    top_verts = np.column_stack([coords, np.full(n_points, height)])
-    vertices = np.vstack([bottom_verts, top_verts])
+    try:
+        # Validate polygon before extrusion - coordinate transforms can introduce precision errors
+        if not polygon.is_valid:
+            polygon = make_valid(polygon)
 
-    # Create faces
-    faces = []
+        # Use trimesh's built-in extrusion which handles concave polygons correctly
+        mesh = trimesh.creation.extrude_polygon(polygon, height=height)
 
-    # Bottom cap (triangulate polygon)
-    # Use simple fan triangulation from first vertex
-    for i in range(1, n_points - 1):
-        faces.append([0, i, i + 1])
+        # Ensure normals are correct
+        if not mesh.is_volume:
+            mesh.fill_holes()
+            trimesh.repair.fix_normals(mesh)
 
-    # Top cap (reversed winding)
-    for i in range(1, n_points - 1):
-        faces.append([n_points, n_points + i + 1, n_points + i])
-
-    # Side faces (quads split into triangles)
-    for i in range(n_points):
-        next_i = (i + 1) % n_points
-        # Bottom vertex indices
-        b1, b2 = i, next_i
-        # Top vertex indices
-        t1, t2 = i + n_points, next_i + n_points
-
-        # Two triangles for the quad
-        faces.append([b1, b2, t2])
-        faces.append([b1, t2, t1])
-
-    mesh = trimesh.Trimesh(vertices=vertices, faces=np.array(faces, dtype=np.int64))
-    mesh.merge_vertices()
-    mesh.fix_normals()
-
-    return mesh
+        return mesh
+    except Exception as e:
+        # If built-in fails, try one more time with buffer(0) trick to fix geometry
+        try:
+            polygon_fixed = polygon.buffer(0)
+            mesh = trimesh.creation.extrude_polygon(polygon_fixed, height=height)
+            if not mesh.is_volume:
+                mesh.fill_holes()
+                trimesh.repair.fix_normals(mesh)
+            return mesh
+        except:
+            # If still failing, raise the original error
+            raise RuntimeError(f"Failed to extrude polygon: {e}")
 
 
 # Import all the helper functions from make_all_sa_countries.py
-exec(open('make_all_sa_countries.py').read().split('def load_and_simplify_countries')[0].split('# Capital star parameters')[1])
+exec(
+    open("make_all_sa_countries.py")
+    .read()
+    .split("def load_and_simplify_countries")[0]
+    .split("# Capital star parameters")[1]
+)
+
 
 def load_and_simplify_countries(ne_path, dem_crs):
     """Load all South American countries and apply consistent simplification."""
@@ -127,8 +127,12 @@ def load_and_simplify_countries(ne_path, dem_crs):
             if geom_series.crs is None:
                 geom_series.set_crs("EPSG:4326", inplace=True)
             geom_wgs84 = geom_series.to_crs("EPSG:4326").iloc[0]
-            geom_wgs84 = geom_wgs84.simplify(VECTOR_SIMPLIFY_DEGREES, preserve_topology=True)
-            geom_proj = gpd.GeoSeries([geom_wgs84], crs="EPSG:4326").to_crs(dem_crs).iloc[0]
+            geom_wgs84 = geom_wgs84.simplify(
+                VECTOR_SIMPLIFY_DEGREES, preserve_topology=True
+            )
+            geom_proj = (
+                gpd.GeoSeries([geom_wgs84], crs="EPSG:4326").to_crs(dem_crs).iloc[0]
+            )
         else:
             geom_proj = gpd.GeoSeries([geom], crs=gdf.crs).to_crs(dem_crs).iloc[0]
 
@@ -150,9 +154,13 @@ def load_and_simplify_countries(ne_path, dem_crs):
 
         if not fg_part_wgs84.is_empty:
             if VECTOR_SIMPLIFY_DEGREES > 0:
-                fg_part_wgs84 = fg_part_wgs84.simplify(VECTOR_SIMPLIFY_DEGREES, preserve_topology=True)
+                fg_part_wgs84 = fg_part_wgs84.simplify(
+                    VECTOR_SIMPLIFY_DEGREES, preserve_topology=True
+                )
 
-            fg_part = gpd.GeoSeries([fg_part_wgs84], crs="EPSG:4326").to_crs(dem_crs).iloc[0]
+            fg_part = (
+                gpd.GeoSeries([fg_part_wgs84], crs="EPSG:4326").to_crs(dem_crs).iloc[0]
+            )
             countries["French Guiana"] = fg_part
             print(f"  Loaded and simplified: French Guiana")
 
@@ -181,7 +189,9 @@ def smooth_mask_and_dem(clipped_dem, nodata):
         mask_filtered = inside_raw
 
     if MASK_SMOOTH_SIGMA_PIX > 0:
-        mask_f = gaussian_filter(mask_filtered.astype(np.float32), sigma=MASK_SMOOTH_SIGMA_PIX)
+        mask_f = gaussian_filter(
+            mask_filtered.astype(np.float32), sigma=MASK_SMOOTH_SIGMA_PIX
+        )
         mask_smooth = mask_f > 0.3
     else:
         mask_smooth = mask_filtered
@@ -234,7 +244,7 @@ def build_surface_mesh(dem_m, step=None):
     yy, xx = np.meshgrid(
         np.arange(nrows, dtype=np.float32) * step_mm,
         np.arange(ncols, dtype=np.float32) * step_mm,
-        indexing="ij"
+        indexing="ij",
     )
 
     z_mm = BASE_THICKNESS_MM + Z_SCALE_MM_PER_M * z
@@ -248,7 +258,9 @@ def build_surface_mesh(dem_m, step=None):
             i2 = i0 + ncols
             i3 = i2 + 1
 
-            if not (mask[r, c] and mask[r, c+1] and mask[r+1, c] and mask[r+1, c+1]):
+            if not (
+                mask[r, c] and mask[r, c + 1] and mask[r + 1, c] and mask[r + 1, c + 1]
+            ):
                 continue
 
             faces.append([i0, i1, i2])
@@ -257,7 +269,9 @@ def build_surface_mesh(dem_m, step=None):
     if not faces:
         raise RuntimeError("No faces built from DEM")
 
-    mesh = trimesh.Trimesh(vertices=verts, faces=np.array(faces, dtype=np.int64), process=True)
+    mesh = trimesh.Trimesh(
+        vertices=verts, faces=np.array(faces, dtype=np.int64), process=True
+    )
     return mesh
 
 
@@ -318,7 +332,9 @@ def simplify_mesh(mesh, target_faces):
             print(f"    WARNING: Simplified mesh is not a volume, using original")
             return mesh
 
-        print(f"    Simplified: {original_faces} -> {len(simplified.faces)} faces ({100*len(simplified.faces)/original_faces:.1f}%)")
+        print(
+            f"    Simplified: {original_faces} -> {len(simplified.faces)} faces ({100 * len(simplified.faces) / original_faces:.1f}%)"
+        )
         return simplified
     except:
         return mesh
@@ -344,8 +360,9 @@ def get_capital_xy_mm(transform, dem_shape, country_name, step, dem_crs=None):
 
     try:
         # If DEM is not in WGS84, transform capital coordinates
-        if dem_crs is not None and dem_crs != 'EPSG:4326':
+        if dem_crs is not None and dem_crs != "EPSG:4326":
             from pyproj import Transformer
+
             # Transform from WGS84 to DEM CRS
             transformer = Transformer.from_crs("EPSG:4326", dem_crs, always_xy=True)
             lon_proj, lat_proj = transformer.transform(lon, lat)
@@ -364,7 +381,9 @@ def get_capital_xy_mm(transform, dem_shape, country_name, step, dem_crs=None):
     return (col_dec * step_mm, row_dec * step_mm)
 
 
-def make_star_polygon_mm(cx, cy, outer_r=STAR_RADIUS_MM, inner_ratio=STAR_INNER_RATIO, points=STAR_POINTS):
+def make_star_polygon_mm(
+    cx, cy, outer_r=STAR_RADIUS_MM, inner_ratio=STAR_INNER_RATIO, points=STAR_POINTS
+):
     """Build a 2D star polygon in mm."""
     coords = []
     for i in range(points * 2):
@@ -413,8 +432,8 @@ def is_capital_near_border(capital_lat_lon, country_geom, threshold_km=50):
     Returns:
         True if capital is within threshold_km of the border
     """
-    from shapely.geometry import Point
     import geopandas as gpd
+    from shapely.geometry import Point
 
     try:
         # Create point in WGS84
@@ -423,7 +442,9 @@ def is_capital_near_border(capital_lat_lon, country_geom, threshold_km=50):
         # Transform capital to the same CRS as country_geom
         # Assume country_geom is in a projected CRS (meters)
         # We need to get its CRS, but since we don't have it here, we'll use geopandas
-        capital_gdf = gpd.GeoDataFrame([1], geometry=[capital_point_wgs84], crs="EPSG:4326")
+        capital_gdf = gpd.GeoDataFrame(
+            [1], geometry=[capital_point_wgs84], crs="EPSG:4326"
+        )
 
         # For the country geom, we need to infer if it's in degrees or meters
         # Check the bounds - if values are small (< 200), likely degrees
@@ -444,9 +465,9 @@ def is_capital_near_border(capital_lat_lon, country_geom, threshold_km=50):
             distance_units_are_degrees = False
 
         # Get the boundary (exterior ring) of the country
-        if country_geom.geom_type == 'Polygon':
+        if country_geom.geom_type == "Polygon":
             boundary = country_geom.exterior
-        elif country_geom.geom_type == 'MultiPolygon':
+        elif country_geom.geom_type == "MultiPolygon":
             # Use the boundary of the largest polygon
             largest = max(country_geom.geoms, key=lambda p: p.area)
             boundary = largest.exterior
@@ -464,7 +485,9 @@ def is_capital_near_border(capital_lat_lon, country_geom, threshold_km=50):
 
         is_near = distance_km <= threshold_km
         if is_near:
-            print(f"    Capital is {distance_km:.1f} km from border (threshold: {threshold_km} km)")
+            print(
+                f"    Capital is {distance_km:.1f} km from border (threshold: {threshold_km} km)"
+            )
 
         return is_near
 
@@ -473,7 +496,9 @@ def is_capital_near_border(capital_lat_lon, country_geom, threshold_km=50):
         return False
 
 
-def add_capital_star_extrusion(solid, capital_xy_mm, extrude_height_mm=STAR_EXTRUDE_HEIGHT_MM, use_local_base=False):
+def add_capital_star_extrusion(
+    solid, capital_xy_mm, extrude_height_mm=STAR_EXTRUDE_HEIGHT_MM, use_local_base=False
+):
     """
     Add an extruded star on top of the mesh at the capital location.
     This is more visible for edge capitals than cutting a hole.
@@ -538,36 +563,40 @@ def add_capital_star_extrusion(solid, capital_xy_mm, extrude_height_mm=STAR_EXTR
             print("    WARNING: Star extrusion union failed")
             return solid
 
-        print(f"    Star extruded at ({cx:.1f}, {cy:.1f}) mm, from {base_type} to +{extrude_height_mm:.1f}mm above terrain")
+        print(
+            f"    Star extruded at ({cx:.1f}, {cy:.1f}) mm, from {base_type} to +{extrude_height_mm:.1f}mm above terrain"
+        )
         return result
     except Exception as e:
         print(f"    WARNING: Star extrusion failed ({e})")
         return solid
 
 
-def cut_lakes_from_mesh(solid, country_geom, dem_transform, min_lake_area_km2=MIN_LAKE_AREA_KM2):
+def cut_lakes_from_mesh(
+    solid, country_geom, dem_transform, min_lake_area_km2=MIN_LAKE_AREA_KM2
+):
     """
     Cut large lakes (interior holes) from the mesh.
 
     This finds interior rings (holes) in the country geometry that represent lakes,
     and cuts them out of the solid mesh if they're above the minimum size threshold.
     """
-    from shapely.ops import transform as shapely_transform
     from shapely.geometry import Polygon
+    from shapely.ops import transform as shapely_transform
 
     # Collect all interior holes from Polygon or MultiPolygon
     lakes = []
 
-    if country_geom.geom_type == 'Polygon':
+    if country_geom.geom_type == "Polygon":
         geoms_to_check = [country_geom]
-    elif country_geom.geom_type == 'MultiPolygon':
+    elif country_geom.geom_type == "MultiPolygon":
         geoms_to_check = list(country_geom.geoms)
     else:
         return solid, 0
 
     # Get all interior holes (lakes) from all polygons
     for poly in geoms_to_check:
-        if not hasattr(poly, 'interiors'):
+        if not hasattr(poly, "interiors"):
             continue
 
         for interior in poly.interiors:
@@ -582,11 +611,14 @@ def cut_lakes_from_mesh(solid, country_geom, dem_transform, min_lake_area_km2=MI
     if not lakes:
         return solid, 0
 
-    print(f"  Found {len(lakes)} large lakes (>{min_lake_area_km2} km²), cutting as holes...")
+    print(
+        f"  Found {len(lakes)} large lakes (>{min_lake_area_km2} km²), cutting as holes..."
+    )
 
     # Convert lake polygons from CRS to mm coordinates
     def crs_to_mm(x, y):
         from rasterio.transform import rowcol
+
         rows, cols = rowcol(dem_transform, x, y)
         x_mm = np.array(cols, dtype=np.float64) * XY_MM_PER_PIXEL
         y_mm = np.array(rows, dtype=np.float64) * XY_MM_PER_PIXEL
@@ -621,14 +653,33 @@ def cut_lakes_from_mesh(solid, country_geom, dem_transform, min_lake_area_km2=MI
 
 def get_country_geom_in_mm(country_geom, dem_transform, step):
     """Convert country geometry from CRS to mm coordinates. Preserves MultiPolygon."""
+    from shapely.geometry import MultiPolygon
     from shapely.ops import transform as shapely_transform
     from shapely.validation import make_valid
-    from shapely.geometry import MultiPolygon
 
     def crs_to_mm(x, y):
-        rows, cols = rowcol(dem_transform, x, y)
-        x_mm = np.array(cols, dtype=np.float64) * XY_MM_PER_PIXEL
-        y_mm = np.array(rows, dtype=np.float64) * XY_MM_PER_PIXEL
+        # Use inverse affine transform to preserve sub-pixel precision
+        # rowcol() rounds to integers, causing aliasing!
+        inv_transform = ~dem_transform
+
+        # Handle both scalar and array inputs
+        x_arr = np.atleast_1d(x)
+        y_arr = np.atleast_1d(y)
+
+        cols = np.zeros(len(x_arr), dtype=np.float64)
+        rows = np.zeros(len(y_arr), dtype=np.float64)
+
+        for i in range(len(x_arr)):
+            col, row = inv_transform * (x_arr[i], y_arr[i])
+            cols[i] = col
+            rows[i] = row
+
+        x_mm = cols * XY_MM_PER_PIXEL
+        y_mm = rows * XY_MM_PER_PIXEL
+
+        # Return same shape as input
+        if np.isscalar(x):
+            return float(x_mm[0]), float(y_mm[0])
         return x_mm, y_mm
 
     geom_mm = shapely_transform(crs_to_mm, country_geom)
@@ -638,15 +689,15 @@ def get_country_geom_in_mm(country_geom, dem_transform, step):
         geom_mm = make_valid(geom_mm)
 
     # Extract polygon from GeometryCollection if needed
-    if geom_mm.geom_type == 'GeometryCollection':
-        polys = [g for g in geom_mm.geoms if g.geom_type in ('Polygon', 'MultiPolygon')]
+    if geom_mm.geom_type == "GeometryCollection":
+        polys = [g for g in geom_mm.geoms if g.geom_type in ("Polygon", "MultiPolygon")]
         if polys:
             # If we have multiple polygons, combine them into a MultiPolygon
             all_polys = []
             for p in polys:
-                if p.geom_type == 'Polygon':
+                if p.geom_type == "Polygon":
                     all_polys.append(p)
-                elif p.geom_type == 'MultiPolygon':
+                elif p.geom_type == "MultiPolygon":
                     all_polys.extend(p.geoms)
             if len(all_polys) == 1:
                 geom_mm = all_polys[0]
@@ -668,7 +719,7 @@ def clip_mesh_to_vector(solid, country_geom_mm):
         country_geom_mm = make_valid(country_geom_mm)
 
     # Get all polygons (handle both Polygon and MultiPolygon)
-    if country_geom_mm.geom_type == 'MultiPolygon':
+    if country_geom_mm.geom_type == "MultiPolygon":
         polygons = list(country_geom_mm.geoms)
         print(f"    Clipping to MultiPolygon with {len(polygons)} components")
     else:
@@ -680,14 +731,18 @@ def clip_mesh_to_vector(solid, country_geom_mm):
 
     cutters = []
     for i, poly in enumerate(polygons):
-        if not hasattr(poly, 'exterior'):
-            print(f"    WARNING: Component {i} has invalid geometry type {poly.geom_type}, skipping")
+        if not hasattr(poly, "exterior"):
+            print(
+                f"    WARNING: Component {i} has invalid geometry type {poly.geom_type}, skipping"
+            )
             continue
 
         # Skip very small polygons (< 10 vertices) as they can cause union issues
         num_vertices = len(poly.exterior.coords)
         if num_vertices < 10:
-            print(f"    Skipping tiny polygon {i} ({num_vertices} vertices) - likely artifact")
+            print(
+                f"    Skipping tiny polygon {i} ({num_vertices} vertices) - likely artifact"
+            )
             continue
 
         try:
@@ -695,8 +750,16 @@ def clip_mesh_to_vector(solid, country_geom_mm):
                 print(f"    Extruding polygon {i} with {num_vertices} vertices...")
             else:
                 print(f"    Extruding polygon with {num_vertices} vertices...")
+
+            # Debug polygon before extrusion
+            print(f"    Polygon valid: {poly.is_valid}, area: {poly.area:.1f}")
+
             cutter = robust_extrude_polygon(poly, height)
             cutter.apply_translation([0, 0, zmin - 1.0])
+
+            print(
+                f"    Extrusion result: {len(cutter.vertices)} verts, {len(cutter.faces)} faces, is_volume={cutter.is_volume}, is_watertight={cutter.is_watertight}"
+            )
 
             if not cutter.is_volume:
                 print(f"    WARNING: Cutter {i} is not a volume, skipping")
@@ -714,13 +777,17 @@ def clip_mesh_to_vector(solid, country_geom_mm):
     # Union all cutters into single mesh
     if len(cutters) == 1:
         combined_cutter = cutters[0]
-        print(f"    Cutter: {len(combined_cutter.vertices)} verts, {len(combined_cutter.faces)} faces, is_volume={combined_cutter.is_volume}")
+        print(
+            f"    Cutter: {len(combined_cutter.vertices)} verts, {len(combined_cutter.faces)} faces, is_volume={combined_cutter.is_volume}"
+        )
     else:
         print(f"    Combining {len(cutters)} cutters...")
         combined_cutter = cutters[0]
         for cutter in cutters[1:]:
-            combined_cutter = combined_cutter.union(cutter, engine='manifold')
-        print(f"    Combined cutter: {len(combined_cutter.vertices)} verts, {len(combined_cutter.faces)} faces")
+            combined_cutter = combined_cutter.union(cutter, engine="manifold")
+        print(
+            f"    Combined cutter: {len(combined_cutter.vertices)} verts, {len(combined_cutter.faces)} faces"
+        )
 
     # Verify combined cutter is a volume before intersection
     if not combined_cutter.is_volume:
@@ -729,12 +796,14 @@ def clip_mesh_to_vector(solid, country_geom_mm):
         combined_cutter.update_faces(combined_cutter.unique_faces())
         trimesh.repair.fix_normals(combined_cutter)
         if not combined_cutter.is_volume:
-            print(f"    WARNING: Cutter still not a volume after repair, skipping vector clip")
+            print(
+                f"    WARNING: Cutter still not a volume after repair, skipping vector clip"
+            )
             return solid
 
     # Perform the intersection
     try:
-        result = solid.intersection(combined_cutter, engine='manifold')
+        result = solid.intersection(combined_cutter, engine="manifold")
         if result is None or len(result.faces) == 0:
             print("    WARNING: Vector clip returned empty, using original")
             return solid
@@ -745,9 +814,146 @@ def clip_mesh_to_vector(solid, country_geom_mm):
         return solid
 
 
-def process_country(country_name, country_geom, dem_src, dem_transform, output_dir, step, target_faces=None, extrude_star=False, remove_lakes=False, min_lake_area_km2=MIN_LAKE_AREA_KM2):
+def validate_dem_coverage(country_name, country_geom, dem_src):
+    """
+    Validate that the DEM has complete coverage for the country.
+
+    Returns (is_valid, missing_pct, message):
+        is_valid: True if coverage is acceptable (>95%)
+        missing_pct: Percentage of country area with no DEM data
+        message: Description of validation result
+    """
+    try:
+        from rasterio.features import rasterize
+
+        # Clip DEM to country boundary WITHOUT filling
+        # This preserves actual nodata vs real data
+        out, out_transform = mask(dem_src, [country_geom], crop=True, filled=False)
+        clipped = out[0].astype(np.float32)
+
+        # Create a mask of pixels inside the country boundary
+        # Rasterize the country geometry to get which pixels are actually inside
+        from rasterio import features
+
+        country_mask = features.rasterize(
+            [(country_geom, 1)],
+            out_shape=clipped.shape,
+            transform=out_transform,
+            fill=0,
+            dtype=np.uint8,
+        )
+
+        # Only consider pixels inside the country boundary
+        inside_country = country_mask > 0
+        total_pixels = np.count_nonzero(inside_country)
+
+        if total_pixels == 0:
+            return False, 100.0, "✗ ERROR: No pixels found inside country boundary"
+
+        # Check which pixels inside the country have DEM data
+        # DEM nodata is typically represented as masked in a masked array
+        if np.ma.is_masked(out):
+            has_data_inside = inside_country & ~out.mask[0]
+        else:
+            # If not masked, all inside pixels have data
+            has_data_inside = inside_country
+
+        data_pixels = np.count_nonzero(has_data_inside)
+        missing_pixels = total_pixels - data_pixels
+        missing_pct = (missing_pixels / total_pixels) * 100 if total_pixels > 0 else 100
+
+        # We consider coverage acceptable if >95% has data
+        # Small gaps are OK (coastal edges, etc), but large missing areas indicate incomplete DEM
+        is_valid = missing_pct < 5.0
+
+        if is_valid:
+            message = f"✓ Coverage OK ({100 - missing_pct:.1f}% has data)"
+        else:
+            message = f"✗ INCOMPLETE COVERAGE: {missing_pct:.1f}% of country area is missing DEM data"
+
+        return is_valid, missing_pct, message
+
+    except Exception as e:
+        return False, 100.0, f"✗ ERROR validating coverage: {e}"
+
+
+def save_dem_as_png(dem, png_path, country_geom=None, dem_transform=None):
+    """Save DEM as a simple grayscale PNG with optional country border."""
+    print(f"  Saving DEM as PNG: {png_path}")
+
+    # Normalize the DEM data to 0-255 for grayscale image
+    valid_dem = np.ma.masked_invalid(dem)
+    min_val = valid_dem.min()
+    max_val = valid_dem.max()
+
+    # Normalize to 0-1 range
+    normalized_dem = (valid_dem - min_val) / (max_val - min_val)
+
+    # Convert to 8-bit grayscale
+    img_array = (normalized_dem * 255).astype(np.uint8)
+
+    # Use Pillow to save the image
+    from PIL import Image, ImageDraw
+
+    img = Image.fromarray(img_array, "L").convert("RGB")
+
+    if country_geom and dem_transform:
+        draw = ImageDraw.Draw(img)
+
+        from shapely.ops import transform as shapely_transform
+
+        def crs_to_pixel(x, y):
+            rows, cols = rowcol(dem_transform, x, y)
+            return (cols, rows)
+
+        # Transform country geometry to pixel coordinates
+        pixel_geom = shapely_transform(crs_to_pixel, country_geom)
+
+        if pixel_geom.geom_type == "Polygon":
+            polygons = [pixel_geom]
+        elif pixel_geom.geom_type == "MultiPolygon":
+            polygons = list(pixel_geom.geoms)
+        else:
+            polygons = []
+
+        for poly in polygons:
+            if hasattr(poly, "exterior"):
+                coords = list(poly.exterior.coords)
+                draw.line(coords, fill="red", width=3)
+
+    img.save(png_path)
+
+
+def process_country(
+    country_name,
+    country_geom,
+    dem_src,
+    dem_transform,
+    output_dir,
+    step,
+    target_faces=None,
+    extrude_star=False,
+    remove_lakes=False,
+    min_lake_area_km2=MIN_LAKE_AREA_KM2,
+    save_png=False,
+):
     """Process a single country with vector clipping."""
     print(f"\nProcessing {country_name}...")
+
+    # Validate DEM coverage first
+    print("  Validating DEM coverage...")
+    is_valid, missing_pct, msg = validate_dem_coverage(
+        country_name, country_geom, dem_src
+    )
+    print(f"    {msg}")
+
+    if not is_valid:
+        print(
+            f"  ⚠️  SKIPPING {country_name} - DEM coverage incomplete ({missing_pct:.1f}% missing)"
+        )
+        print(f"      The DEM does not fully cover this country's territory.")
+        print(f"      Please expand the DEM coverage or use a different DEM source.")
+        raise ValueError(f"Incomplete DEM coverage for {country_name}")
 
     # Clip DEM
     print("  Clipping DEM...")
@@ -758,13 +964,20 @@ def process_country(country_name, country_geom, dem_src, dem_transform, output_d
     print("  Smoothing mask and DEM...")
     dem_smooth = smooth_mask_and_dem(clipped_dem, nodata=0)
 
+    # Save PNG if requested
+    if save_png:
+        png_path = os.path.join(output_dir, f"{country_name.replace(' ', '_')}_dem.png")
+        save_dem_as_png(dem_smooth, png_path, country_geom, transform)
+
     # Build surface mesh
     print(f"  Building surface mesh (step={step})...")
     surface = build_surface_mesh(dem_smooth, step=step)
     print(f"    Surface: {len(surface.faces)} faces")
 
     # Compute capital XY (transform from WGS84 to DEM CRS if needed)
-    capital_xy_mm = get_capital_xy_mm(transform, clipped_dem.shape, country_name, step, dem_src.crs)
+    capital_xy_mm = get_capital_xy_mm(
+        transform, clipped_dem.shape, country_name, step, dem_src.crs
+    )
 
     # Solidify
     print("  Solidifying...")
@@ -783,7 +996,9 @@ def process_country(country_name, country_geom, dem_src, dem_transform, output_d
 
     # Cut lakes (optional)
     if remove_lakes:
-        solid, lakes_cut = cut_lakes_from_mesh(solid, country_geom, transform, min_lake_area_km2)
+        solid, lakes_cut = cut_lakes_from_mesh(
+            solid, country_geom, transform, min_lake_area_km2
+        )
         if lakes_cut > 0:
             print(f"  ✓ Removed {lakes_cut} lakes as holes")
 
@@ -821,12 +1036,23 @@ def main():
     parser.add_argument("--step", type=int, default=XY_STEP)
     parser.add_argument("--target-faces", type=int, default=TARGET_FACES)
     parser.add_argument("--countries", nargs="+")
-    parser.add_argument("--extrude-star", action="store_true",
-                        help="Extrude capital star upward instead of cutting a hole (better for edge capitals)")
-    parser.add_argument("--remove-lakes", action="store_true",
-                        help="Remove large lakes as holes in the mesh")
-    parser.add_argument("--min-lake-area", type=float, default=MIN_LAKE_AREA_KM2,
-                        help=f"Minimum lake area in km² to remove (default: {MIN_LAKE_AREA_KM2})")
+    parser.add_argument(
+        "--extrude-star",
+        action="store_true",
+        help="Extrude capital star upward instead of cutting a hole (better for edge capitals)",
+    )
+    parser.add_argument(
+        "--remove-lakes",
+        action="store_true",
+        help="Remove large lakes as holes in the mesh",
+    )
+    parser.add_argument(
+        "--min-lake-area",
+        type=float,
+        default=MIN_LAKE_AREA_KM2,
+        help=f"Minimum lake area in km² to remove (default: {MIN_LAKE_AREA_KM2})",
+    )
+    parser.add_argument("--save-png", action="store_true", help="Save a PNG of the DEM")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -851,14 +1077,23 @@ def main():
 
     for country_name, country_geom in countries.items():
         try:
-            process_country(country_name, country_geom, dem_src, dem_src.transform,
-                          args.output_dir, args.step, target_faces,
-                          extrude_star=args.extrude_star,
-                          remove_lakes=args.remove_lakes,
-                          min_lake_area_km2=args.min_lake_area)
+            process_country(
+                country_name,
+                country_geom,
+                dem_src,
+                dem_src.transform,
+                args.output_dir,
+                args.step,
+                target_faces,
+                extrude_star=args.extrude_star,
+                remove_lakes=args.remove_lakes,
+                min_lake_area_km2=args.min_lake_area,
+                save_png=args.save_png,
+            )
         except Exception as e:
             print(f"\nERROR: {country_name}: {e}")
             import traceback
+
             traceback.print_exc()
 
     dem_src.close()
