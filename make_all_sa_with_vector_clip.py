@@ -188,6 +188,12 @@ def smooth_mask_and_dem(clipped_dem, nodata):
     else:
         mask_filtered = inside_raw
 
+    # Fill interior holes (like Caspian Sea within Azerbaijan)
+    # This ensures landlocked water bodies are included in the mesh
+    from scipy.ndimage import binary_fill_holes
+
+    mask_filtered = binary_fill_holes(mask_filtered)
+
     if MASK_SMOOTH_SIGMA_PIX > 0:
         mask_f = gaussian_filter(
             mask_filtered.astype(np.float32), sigma=MASK_SMOOTH_SIGMA_PIX
