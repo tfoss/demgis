@@ -144,14 +144,47 @@ def visualize_coverage_qc(country_name, country_boundary, stl_path, dem_path, xy
     print(f"  Expected bounds: {expected_bounds}")
     print(f"  STL bounds (before alignment): {stl_bounds}")
 
-    # Align STL footprint to expected footprint by translating to match min corners
-    offset_x = expected_bounds[0] - stl_bounds[0]
-    offset_y = expected_bounds[1] - stl_bounds[1]
+    # Align STL footprint to expected footprint by optimizing for maximum intersection
+    # Start with bounding box alignment
+    initial_offset_x = expected_bounds[0] - stl_bounds[0]
+    initial_offset_y = expected_bounds[1] - stl_bounds[1]
+
+    # Optimize offset to maximize intersection area
+    # Search in a small window around the initial alignment (±5mm in 0.5mm steps)
+    best_offset_x = initial_offset_x
+    best_offset_y = initial_offset_y
+    best_intersection = 0
+
+    search_range = 5.0  # mm
+    search_step = 0.5   # mm (matches xy_mm_per_pixel for 2km DEM)
+
+    for dx in np.arange(-search_range, search_range + search_step, search_step):
+        for dy in np.arange(-search_range, search_range + search_step, search_step):
+            test_offset_x = initial_offset_x + dx
+            test_offset_y = initial_offset_y + dy
+
+            def test_translate(x, y):
+                return (x + test_offset_x, y + test_offset_y)
+
+            test_footprint = shapely_transform(test_translate, stl_footprint)
+            test_intersection = expected_footprint.intersection(test_footprint)
+            test_area = test_intersection.area if not test_intersection.is_empty else 0
+
+            if test_area > best_intersection:
+                best_intersection = test_area
+                best_offset_x = test_offset_x
+                best_offset_y = test_offset_y
+
+    offset_x = best_offset_x
+    offset_y = best_offset_y
 
     def translate(x, y):
         return (x + offset_x, y + offset_y)
 
     stl_footprint = shapely_transform(translate, stl_footprint)
+
+    print(f"  Initial offset: ({initial_offset_x:.2f}, {initial_offset_y:.2f})")
+    print(f"  Optimized offset: ({offset_x:.2f}, {offset_y:.2f}) [adj: ({offset_x - initial_offset_x:.2f}, {offset_y - initial_offset_y:.2f})]")
 
     # Recalculate after alignment
     intersection = expected_footprint.intersection(stl_footprint)
