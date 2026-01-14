@@ -208,26 +208,23 @@ CAPITALS.update({
 
 # Coastal capitals that should use extruded stars
 COASTAL_CAPITALS = {
-    # Europe
-    "Portugal", "Spain", "United Kingdom", "Ireland", "Netherlands", "Belgium",
-    "France", "Italy", "Iceland", "Norway", "Sweden", "Finland", "Denmark",
-    "Estonia", "Latvia", "Lithuania", "Poland", "Germany", "Croatia",
-    "Montenegro", "Albania", "Greece", "Bulgaria", "Romania", "Ukraine",
+    # Europe - truly coastal capitals only
+    "Portugal", "United Kingdom", "Ireland", "Netherlands",
+    "Iceland", "Norway", "Sweden", "Finland", "Denmark",
+    "Estonia", "Latvia", "Greece",
 
-    # Middle East
-    "Turkey", "Cyprus", "Syria", "Lebanon", "Israel", "Egypt",
-    "Saudi Arabia", "Oman", "United Arab Emirates", "Qatar",
+    # Middle East - truly coastal capitals only
+    "Lebanon", "Oman", "United Arab Emirates", "Qatar",
     "Bahrain", "Kuwait",
 
-    # South Asia
-    "Pakistan", "India", "Bangladesh", "Sri Lanka", "Maldives",
+    # South Asia - truly coastal capitals only
+    "Sri Lanka", "Maldives",
 
-    # Southeast Asia
-    "Myanmar", "Thailand", "Vietnam", "Cambodia", "Malaysia", "Singapore",
-    "Brunei", "Philippines", "Indonesia", "Timor-Leste",
+    # Southeast Asia - truly coastal capitals only
+    "Thailand", "Singapore", "Brunei", "Philippines", "Indonesia", "Timor-Leste",
 
-    # East Asia
-    "China", "North Korea", "South Korea", "Japan", "Taiwan",
+    # East Asia - truly coastal capitals only
+    "Japan",
 }
 
 
