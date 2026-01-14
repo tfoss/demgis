@@ -150,13 +150,16 @@ def visualize_coverage_qc(country_name, country_boundary, stl_path, dem_path, xy
     initial_offset_y = expected_bounds[1] - stl_bounds[1]
 
     # Optimize offset to maximize intersection area
-    # Search in a small window around the initial alignment (±5mm in 0.5mm steps)
+    # Search in a window around the initial alignment (±10mm in 0.5mm steps)
     best_offset_x = initial_offset_x
     best_offset_y = initial_offset_y
     best_intersection = 0
 
-    search_range = 5.0  # mm
-    search_step = 0.5   # mm (matches xy_mm_per_pixel for 2km DEM)
+    search_range = 10.0  # mm (expanded from 5mm for better coverage)
+    search_step = 0.1   # mm (finer than xy_mm_per_pixel for sub-pixel precision)
+
+    # Track all tested offsets for debugging
+    test_results = []
 
     for dx in np.arange(-search_range, search_range + search_step, search_step):
         for dy in np.arange(-search_range, search_range + search_step, search_step):
@@ -170,10 +173,19 @@ def visualize_coverage_qc(country_name, country_boundary, stl_path, dem_path, xy
             test_intersection = expected_footprint.intersection(test_footprint)
             test_area = test_intersection.area if not test_intersection.is_empty else 0
 
+            test_results.append((dx, dy, test_area))
+
             if test_area > best_intersection:
                 best_intersection = test_area
                 best_offset_x = test_offset_x
                 best_offset_y = test_offset_y
+
+    # Print top 5 results for debugging
+    test_results.sort(key=lambda x: x[2], reverse=True)
+    print(f"  Top 5 offsets tested:")
+    for i, (dx, dy, area) in enumerate(test_results[:5]):
+        pct = (area / expected_area) * 100
+        print(f"    {i+1}. dx={dx:+.1f}, dy={dy:+.1f} → {pct:.1f}% coverage")
 
     offset_x = best_offset_x
     offset_y = best_offset_y
