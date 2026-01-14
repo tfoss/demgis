@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a DEM (Digital Elevation Model) processing pipeline for creating 3D-printable STL files of South American countries. The pipeline downloads elevation data, clips it to country boundaries, and generates watertight solid meshes with topographic relief suitable for 3D printing.
+This is a DEM (Digital Elevation Model) processing pipeline for creating 3D-printable STL files of countries worldwide. The pipeline downloads elevation data, clips it to country boundaries, and generates watertight solid meshes with topographic relief suitable for 3D printing.
+
+**Regional Coverage:**
+- **South America**: Complete (original implementation)
+- **Africa**: Complete
+- **Eurasia**: Unified mainland DEM covering Europe, Middle East, Caucasus, Central Asia, South Asia, Southeast Asia, East Asia (see Eurasia section below)
 
 ## Key Dependencies
 
@@ -127,11 +132,71 @@ The same coordinate transformation is used for vector boundary clipping (`get_co
 
 ## Data Files and Directories
 
-- `sa_1km_smooth.tif`: Smoothed South America DEM mosaic (primary input)
+### Regional DEMs
+- `sa_1km_smooth_aea.tif`: South America DEM (Albers Equal Area projection)
+- `africa_2km_smooth_aea.tif`: Africa DEM (Albers Equal Area projection)
+- `eurasia_2km_smooth_aea.tif`: **Unified Eurasia mainland DEM** (see below)
+
+### Supporting Files
 - `data/ne/`: Natural Earth admin0 shapefiles (country boundaries)
 - `country_dems/`: Individual country DEM extracts (intermediate)
-- `STLs/`: Final output directory for solid STL files
-- `sa_tiles/`: Raw Copernicus DEM tiles (1771 tiles covering region)
+- `STLs_*/`: Timestamped output directories for solid STL files by region
+- Raw tile directories (stored on external disk): `eurasia_tiles/`, `africa_tiles/`, `sa_tiles/`
+
+## Unified Eurasia Mainland DEM
+
+**Critical for boundary matching**: All mainland Eurasia countries MUST use `eurasia_2km_smooth_aea.tif` to ensure adjacent countries have perfectly matching boundaries.
+
+### Coverage
+Geographic extent: 10°W to 150°E, 8°N to 72°N (~8,330 tiles, 240GB raw data)
+
+**Regions covered:**
+- Europe: Iceland, Portugal, UK to Urals
+- Middle East: Egypt, Turkey, Levant, Arabian Peninsula, Iran, Iraq
+- Caucasus: Georgia, Armenia, Azerbaijan
+- Central Asia: Afghanistan, Kazakhstan, Kyrgyzstan, Tajikistan, Turkmenistan, Uzbekistan
+- South Asia: Pakistan, India, Nepal, Bhutan, Bangladesh, Sri Lanka
+- Southeast Asia: Myanmar, Thailand, Laos, Vietnam, Cambodia, Malaysia, Singapore
+- East Asia: China, Mongolia, Korea (mainland)
+- Russia: Mainland up to 72°N
+
+### Projection
+```
++proj=aea +lat_1=25 +lat_2=60 +lat_0=42.5 +lon_0=70 +datum=WGS84 +units=m +no_defs
+```
+- Standard parallels: 25°N and 60°N
+- Central meridian: 70°E
+- Resolution: 2000m × 2000m (2km)
+
+### Building the DEM
+
+**1. Download tiles:**
+```bash
+python3 get_eurasia_dem.py  # Generate download lists
+s5cmd --no-sign-request --numworkers 16 run eurasia_s5cmd_30m_list.txt
+s5cmd --no-sign-request --numworkers 4 run eurasia_s5cmd_90m_list.txt
+```
+
+**2. Build unified DEM:**
+```bash
+./build_eurasia_dem_aea_2km.sh  # Handles 30m/90m tile merging automatically
+```
+
+### Copernicus Coverage Gaps
+The Caucasus region (N38-N41, E043-E048) has 24 tiles missing from the 30m dataset. The pipeline automatically:
+1. Downloads these tiles from the 90m dataset
+2. Resamples 90m→30m using bilinear interpolation
+3. Merges seamlessly with 30m tiles
+
+### Parameters for Eurasia Countries
+Use these settings for all mainland Eurasia countries:
+```python
+XY_MM_PER_PIXEL = 0.50          # For 2km DEM
+VECTOR_SIMPLIFY_DEGREES = 0.02  # ~2.2km smoothing
+MASK_SMOOTH_SIGMA_PIX = 10.0    # Standard smoothing
+```
+
+See `EURASIA_DEM_README.md` for complete documentation.
 
 ## Boolean Operations and Mesh Repair
 
