@@ -216,7 +216,7 @@ COASTAL_CAPITALS = {
 
     # Middle East
     "Turkey", "Cyprus", "Syria", "Lebanon", "Israel", "Egypt",
-    "Saudi Arabia", "Yemen", "Oman", "United Arab Emirates", "Qatar",
+    "Saudi Arabia", "Oman", "United Arab Emirates", "Qatar",
     "Bahrain", "Kuwait",
 
     # South Asia
