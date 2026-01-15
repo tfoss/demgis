@@ -11,6 +11,20 @@ This is a DEM (Digital Elevation Model) processing pipeline for creating 3D-prin
 - **Africa**: Complete
 - **Eurasia**: Unified mainland DEM covering Europe, Middle East, Caucasus, Central Asia, South Asia, Southeast Asia, East Asia (see Eurasia section below)
 
+## Python Environment
+
+**CRITICAL**: Always use the conda environment 'demgis' for running Python scripts in this project.
+
+All Python commands should be prefixed with:
+```bash
+conda run -n demgis python3 <script.py> [args]
+```
+
+Example:
+```bash
+conda run -n demgis python3 make_eurasia_all.py --dem eurasia_2km_smooth_aea.tif --ne data/ne/ne_10m_admin_0_countries.shp
+```
+
 ## Key Dependencies
 
 - **rasterio**: DEM file I/O and raster operations

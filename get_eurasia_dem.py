@@ -101,10 +101,10 @@ def create_s5cmd_lists():
 
     # Known Caucasus region where 30m tiles are missing
     # We'll check the 90m dataset for these coordinates
-    # Azerbaijan/Armenia/Georgia region: N38-N41, E043-E048
+    # Azerbaijan/Armenia/Georgia region: N38-N41, E043-E051 (expanded to cover eastern Azerbaijan)
     caucasus_region = set()
     for lat in range(38, 42):  # N38-N41
-        for lon in range(43, 49):  # E043-E048
+        for lon in range(43, 52):  # E043-E051 (includes full Azerbaijan to Caspian Sea)
             caucasus_region.add((lat, lon))
 
     tile_30m_urls = []
