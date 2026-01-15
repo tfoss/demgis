@@ -300,6 +300,8 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--xy-mm-per-pixel", type=float, default=0.50)
     parser.add_argument("--vector-simplify", type=float, default=0.02)
+    parser.add_argument("--use-russia-kaliningrad", action="store_true",
+                       help="Extract Kaliningrad from Russia's MultiPolygon")
     args = parser.parse_args()
 
     # Load DEM CRS
@@ -308,13 +310,32 @@ def main():
 
     # Load country
     gdf = gpd.read_file(args.ne)
-    country_row = gdf[gdf["ADMIN"] == args.country]
 
-    if country_row.empty:
-        print(f"✗ Country '{args.country}' not found")
-        sys.exit(1)
-
-    country_geom_wgs84 = country_row.iloc[0].geometry
+    # Special case: Kaliningrad from Russia
+    if args.use_russia_kaliningrad and args.country == "Kaliningrad":
+        country_row = gdf[gdf["ADMIN"] == "Russia"]
+        if country_row.empty:
+            print(f"✗ Russia not found (needed for Kaliningrad extraction)")
+            sys.exit(1)
+        russia_geom = country_row.iloc[0].geometry
+        # Extract Kaliningrad (polygon index 1)
+        polys = list(russia_geom.geoms)
+        kaliningrad_poly = None
+        for poly in polys:
+            centroid = poly.centroid
+            if 19 < centroid.x < 23 and 54 < centroid.y < 56:
+                kaliningrad_poly = poly
+                break
+        if kaliningrad_poly is None:
+            print(f"✗ Could not extract Kaliningrad from Russia")
+            sys.exit(1)
+        country_geom_wgs84 = kaliningrad_poly
+    else:
+        country_row = gdf[gdf["ADMIN"] == args.country]
+        if country_row.empty:
+            print(f"✗ Country '{args.country}' not found")
+            sys.exit(1)
+        country_geom_wgs84 = country_row.iloc[0].geometry
 
     # Handle MultiPolygon
     if country_geom_wgs84.geom_type == "MultiPolygon":
