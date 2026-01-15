@@ -217,6 +217,9 @@ COASTAL_CAPITALS = {
     "Lebanon", "Oman", "United Arab Emirates", "Qatar",
     "Bahrain", "Kuwait",
 
+    # Caucasus - coastal capitals only
+    "Azerbaijan",  # Baku on Caspian Sea - low elevation, needs extruded star
+
     # South Asia - truly coastal capitals only
     "Sri Lanka", "Maldives",
 

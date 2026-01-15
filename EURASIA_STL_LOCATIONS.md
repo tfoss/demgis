@@ -200,3 +200,12 @@ Generated: Wed Jan 14 19:26:30 EST 2026
 - Yemen_solid.stl (Star type correction - cut hole for inland capital)
 - Yemen_coverage_qc.png (99.9% coverage)
 - Yemen_dem.png
+
+## STLs_Eurasia_AzerbaijanStarup_20260115_090730_824103b
+
+### Caucasus
+- Azerbaijan_starup.stl (DEM coverage fix + extruded star for coastal capital Baku)
+- Azerbaijan_coverage_qc.png (98.1% coverage)
+- Azerbaijan_dem.png
+
+Note: This replaces the earlier Azerbaijan_solid.stl version. Baku's low coastal elevation requires an extruded star.

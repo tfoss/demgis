@@ -34,10 +34,10 @@ These have **corrected star types** (cut holes instead of extruded):
 - **Reason**: Cut star hole (Sana'a is inland, not coastal)
 - **Coverage**: 99.9%
 
-**Azerbaijan** (DEM coverage fix):
-- **Use**: `STLs_Eurasia_AzerbaijanFix_20260115_002822_1537f01/Caucasus/Azerbaijan_solid.stl`
-- **Reason**: Extended Caucasus DEM to include eastern region (Caspian Sea coast)
-- **Coverage**: 97.8% (was 89.4% - missing eastern part)
+**Azerbaijan** (DEM coverage fix + extruded star):
+- **Use**: `STLs_Eurasia_AzerbaijanStarup_20260115_090730_824103b/Caucasus/Azerbaijan_starup.stl`
+- **Reason**: Extended Caucasus DEM to include eastern region + extruded star (Baku is coastal, low elevation)
+- **Coverage**: 98.1% (was 89.4% - missing eastern part)
 
 ---
 
