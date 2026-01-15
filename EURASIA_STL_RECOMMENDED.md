@@ -1,6 +1,6 @@
 # Eurasia STLs - Recommended Versions for Printing
 
-Generated: $(date)
+Generated: 2026-01-15
 
 ## Use These Versions
 
@@ -27,7 +27,21 @@ These have **corrected star types** (cut holes instead of extruded):
 
 ---
 
-### Full Generation Countries (48 countries) - Use Full versions
+### Additional Individual Fixes - Use These Updated Versions
+
+**Yemen** (corrected star type):
+- **Use**: `STLs_Eurasia_YemenFix_20260115_083538_4e63a67/MiddleEast/Yemen_solid.stl`
+- **Reason**: Cut star hole (Sana'a is inland, not coastal)
+- **Coverage**: 99.9%
+
+**Azerbaijan** (DEM coverage fix):
+- **Use**: `STLs_Eurasia_AzerbaijanFix_20260115_002822_1537f01/Caucasus/Azerbaijan_solid.stl`
+- **Reason**: Extended Caucasus DEM to include eastern region (Caspian Sea coast)
+- **Coverage**: 97.8% (was 89.4% - missing eastern part)
+
+---
+
+### Full Generation Countries (46 countries) - Use Full versions
 **Directory**: `STLs_Eurasia_Full_20260113_210127_5c16017/`
 
 **Europe (21):**
@@ -36,12 +50,12 @@ These have **corrected star types** (cut holes instead of extruded):
 - Netherlands, North Macedonia, Norway, Portugal, Russia
 - Slovakia, Slovenia, Sweden, Switzerland, United Kingdom
 
-**Middle East (10):**
+**Middle East (9):**
 - Iran, Iraq, Jordan, Kuwait, Lebanon, Oman
-- Palestine, Qatar, United Arab Emirates, Yemen
+- Palestine, Qatar, United Arab Emirates
 
-**Caucasus (3):**
-- Armenia, Azerbaijan, Georgia
+**Caucasus (2):**
+- Armenia, Georgia
 
 **Central Asia (6):**
 - Afghanistan, Kazakhstan, Kyrgyzstan, Tajikistan

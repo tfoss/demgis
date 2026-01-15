@@ -186,3 +186,17 @@ Generated: Wed Jan 14 19:26:30 EST 2026
 
 **Test countries** (all regions, good for QC verification):
 `STLs_Eurasia_Test_20260113_205559_cef28e5/`
+
+## STLs_Eurasia_AzerbaijanFix_20260115_002822_1537f01
+
+### Caucasus
+- Azerbaijan_solid.stl (DEM coverage fix - includes eastern region)
+- Azerbaijan_coverage_qc.png (97.8% coverage)
+- Azerbaijan_dem.png
+
+## STLs_Eurasia_YemenFix_20260115_083538_4e63a67
+
+### MiddleEast
+- Yemen_solid.stl (Star type correction - cut hole for inland capital)
+- Yemen_coverage_qc.png (99.9% coverage)
+- Yemen_dem.png
