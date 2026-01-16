@@ -138,11 +138,38 @@ if country_name == "Azerbaijan":
 
 **Result**: Azerbaijan includes all major territories (not just mainland)
 
+### 7. Turkey - European Part Missing
+
+**Issue**: Turkey spans both Asia and Europe. The European part (East Thrace) west of the Bosphorus was missing because script only kept largest polygon.
+
+**Geography**: Turkey has 6 polygons:
+- Polygon 0 (largest): Asian Turkey (centroid 35.4°E, 39.0°N)
+- Polygon 1 (2nd): European Turkey/East Thrace (centroid 27.3°E, 41.3°N) - borders Greece and Bulgaria
+- Polygons 2-5: Small islands
+
+**Fix**: Special handling in `make_eurasia_all.py` to keep both main parts:
+```python
+elif country_name == "Turkey":
+    polys = sorted(geom.geoms, key=lambda p: p.area, reverse=True)
+    keep_polys = [polys[0], polys[1]]  # Asian Turkey + European Turkey
+    geom = MultiPolygon(keep_polys)
+```
+
+**Result**: Turkey includes both Asian and European parts (complete country)
+
+**Coverage**: 99.6%
+
+**Generated**: `STLs_Turkey_Complete_20260116_111331_041944b/MiddleEast/Turkey_solid.stl`
+
+**Also Updated**: `generate_qc_png.py` to handle Turkey's MultiPolygon correctly
+
+**Commit**: (pending) - Add Turkey European part (East Thrace)
+
 ---
 
 ## Country Name Mismatches
 
-### 7. Serbia - Natural Earth Name
+### 8. Serbia - Natural Earth Name
 
 **Issue**: Script used "Serbia" but Natural Earth data has "Republic of Serbia"
 
@@ -162,7 +189,7 @@ if country_name == "Azerbaijan":
 
 ## Separate Region STLs
 
-### 8. Kaliningrad - Russia's Baltic Exclave
+### 9. Kaliningrad - Russia's Baltic Exclave
 
 **Purpose**: Generate Kaliningrad separately from mainland Russia for easier printing
 
@@ -183,7 +210,7 @@ conda run -n demgis python3 generate_kaliningrad.py
 
 **Commit**: `caa45ed` - Add Kaliningrad separate STL generation
 
-### 9. Northern Ireland - UK Region
+### 10. Northern Ireland - UK Region
 
 **Purpose**: Generate Northern Ireland separately from Great Britain for easier printing
 
@@ -208,7 +235,7 @@ conda run -n demgis python3 generate_northern_ireland.py
 
 ## QC PNG Generation
 
-### 10. QC Coverage Visualization
+### 11. QC Coverage Visualization
 
 **Tool**: `generate_qc_png.py` creates alignment visualization
 

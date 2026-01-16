@@ -364,6 +364,11 @@ def main():
                 if poly.centroid.x >= 50.0:
                     keep_polys.append(poly)
             country_geom_wgs84 = MultiPolygon(keep_polys)
+        elif args.country == "Turkey":
+            # Keep both Asian Turkey and European Turkey (East Thrace)
+            polys = sorted(country_geom_wgs84.geoms, key=lambda p: p.area, reverse=True)
+            keep_polys = [polys[0], polys[1]]
+            country_geom_wgs84 = MultiPolygon(keep_polys)
         else:
             country_geom_wgs84 = max(country_geom_wgs84.geoms, key=lambda p: p.area)
 
