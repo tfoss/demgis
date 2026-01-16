@@ -302,6 +302,8 @@ def main():
     parser.add_argument("--vector-simplify", type=float, default=0.02)
     parser.add_argument("--use-russia-kaliningrad", action="store_true",
                        help="Extract Kaliningrad from Russia's MultiPolygon")
+    parser.add_argument("--use-uk-northern-ireland", action="store_true",
+                       help="Extract Northern Ireland from UK's MultiPolygon")
     args = parser.parse_args()
 
     # Load DEM CRS
@@ -330,6 +332,22 @@ def main():
             print(f"✗ Could not extract Kaliningrad from Russia")
             sys.exit(1)
         country_geom_wgs84 = kaliningrad_poly
+    # Special case: Northern Ireland from UK
+    elif args.use_uk_northern_ireland and args.country == "Northern Ireland":
+        country_row = gdf[gdf["ADMIN"] == "United Kingdom"]
+        if country_row.empty:
+            print(f"✗ United Kingdom not found (needed for Northern Ireland extraction)")
+            sys.exit(1)
+        uk_geom = country_row.iloc[0].geometry
+        # Extract Northern Ireland (second largest polygon)
+        polys_sorted = sorted(uk_geom.geoms, key=lambda p: p.area, reverse=True)
+        ni_poly = polys_sorted[1]
+        # Verify it's Northern Ireland (centroid around -6.7°W, 54.6°N)
+        centroid = ni_poly.centroid
+        if not (-8 < centroid.x < -5 and 54 < centroid.y < 56):
+            print(f"✗ Extracted polygon doesn't match Northern Ireland location")
+            sys.exit(1)
+        country_geom_wgs84 = ni_poly
     else:
         country_row = gdf[gdf["ADMIN"] == args.country]
         if country_row.empty:
