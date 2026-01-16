@@ -53,7 +53,7 @@ EURASIA_REGIONS = {
         # Northern Europe
         "Iceland", "Norway", "Sweden", "Finland", "Denmark", "Estonia", "Latvia", "Lithuania",
         # Central/Eastern Europe
-        "Poland", "Czech Republic", "Slovakia", "Hungary", "Slovenia", "Croatia",
+        "Poland", "Czechia", "Slovakia", "Hungary", "Slovenia", "Croatia",
         "Bosnia and Herzegovina", "Republic of Serbia", "Montenegro", "Albania", "North Macedonia",
         "Greece", "Bulgaria", "Romania", "Moldova",
         # Eastern Europe
@@ -122,7 +122,7 @@ CAPITALS.update({
 
     # Europe - Central/Eastern
     "Poland": ("Warsaw", 21.0122, 52.2297),
-    "Czech Republic": ("Prague", 14.4378, 50.0755),
+    "Czechia": ("Prague", 14.4378, 50.0755),
     "Slovakia": ("Bratislava", 17.1077, 48.1486),
     "Hungary": ("Budapest", 19.0402, 47.4979),
     "Slovenia": ("Ljubljana", 14.5058, 46.0569),

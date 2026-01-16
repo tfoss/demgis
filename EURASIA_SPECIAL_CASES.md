@@ -190,13 +190,29 @@ elif country_name == "Turkey":
 
 **Generated**: `STLs_Serbia_20260116_110852_5a17d03/Europe/Republic_of_Serbia_solid.stl`
 
-**Commit**: (pending) - Fix Serbia name mismatch with Natural Earth data
+**Commit**: `041944b` - Fix Kazakhstan Baikonur hole and Serbia name mismatch + comprehensive docs
+
+### 9. Czechia - Natural Earth Name
+
+**Issue**: Script used "Czech Republic" but Natural Earth data uses "Czechia" (short name officially adopted in 2016)
+
+**Fix**: Updated country list and capitals dictionary in `make_eurasia_all.py`:
+- Changed "Czech Republic" → "Czechia" in EURASIA_REGIONS
+- Changed capitals key to match
+
+**Result**: Czechia now generates correctly
+
+**Coverage**: 98.9%
+
+**Generated**: `STLs_Czechia_20260116_154733_ab50f42/Europe/Czechia_solid.stl`
+
+**Commit**: (pending) - Fix Czechia name mismatch with Natural Earth data
 
 ---
 
 ## Separate Region STLs
 
-### 9. Kaliningrad - Russia's Baltic Exclave
+### 10. Kaliningrad - Russia's Baltic Exclave
 
 **Purpose**: Generate Kaliningrad separately from mainland Russia for easier printing
 
@@ -217,7 +233,7 @@ conda run -n demgis python3 generate_kaliningrad.py
 
 **Commit**: `caa45ed` - Add Kaliningrad separate STL generation
 
-### 10. Northern Ireland - UK Region
+### 11. Northern Ireland - UK Region
 
 **Purpose**: Generate Northern Ireland separately from Great Britain for easier printing
 
@@ -242,7 +258,7 @@ conda run -n demgis python3 generate_northern_ireland.py
 
 ## QC PNG Generation
 
-### 11. QC Coverage Visualization
+### 12. QC Coverage Visualization
 
 **Tool**: `generate_qc_png.py` creates alignment visualization
 
