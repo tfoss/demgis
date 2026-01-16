@@ -54,7 +54,7 @@ EURASIA_REGIONS = {
         "Iceland", "Norway", "Sweden", "Finland", "Denmark", "Estonia", "Latvia", "Lithuania",
         # Central/Eastern Europe
         "Poland", "Czech Republic", "Slovakia", "Hungary", "Slovenia", "Croatia",
-        "Bosnia and Herzegovina", "Serbia", "Montenegro", "Albania", "North Macedonia",
+        "Bosnia and Herzegovina", "Republic of Serbia", "Montenegro", "Albania", "North Macedonia",
         "Greece", "Bulgaria", "Romania", "Moldova",
         # Eastern Europe
         "Ukraine", "Belarus", "Russia",
@@ -128,7 +128,7 @@ CAPITALS.update({
     "Slovenia": ("Ljubljana", 14.5058, 46.0569),
     "Croatia": ("Zagreb", 15.9819, 45.8150),
     "Bosnia and Herzegovina": ("Sarajevo", 18.4131, 43.8564),
-    "Serbia": ("Belgrade", 20.4489, 44.7866),
+    "Republic of Serbia": ("Belgrade", 20.4489, 44.7866),
     "Montenegro": ("Podgorica", 19.2636, 42.4304),
     "Albania": ("Tirana", 19.8187, 41.3275),
     "North Macedonia": ("Skopje", 21.4254, 41.9973),
@@ -270,6 +270,15 @@ def load_and_simplify_countries_eurasia(ne_path, dem_crs, region_countries):
                 # For other countries, take only the largest (mainland)
                 geom = max(geom.geoms, key=lambda p: p.area)
                 print(f"  {country_name}: MultiPolygon detected, using mainland only")
+
+        # Remove interior rings (holes) for Kazakhstan to fill Baikonur Cosmodrome lease area
+        # Baikonur appears as a hole in Natural Earth data (leased to Russia)
+        if country_name == "Kazakhstan" and geom.geom_type == "Polygon":
+            num_holes = len(list(geom.interiors))
+            if num_holes > 0:
+                from shapely.geometry import Polygon
+                geom = Polygon(geom.exterior.coords)
+                print(f"  {country_name}: Removed {num_holes} interior ring(s) (Baikonur Cosmodrome lease)")
 
         if VECTOR_SIMPLIFY_DEGREES > 0:
             geom_series = gpd.GeoSeries([geom], crs=gdf.crs)
