@@ -365,10 +365,14 @@ def main():
                     keep_polys.append(poly)
             country_geom_wgs84 = MultiPolygon(keep_polys)
         elif args.country == "Turkey":
-            # Keep both Asian Turkey and European Turkey (East Thrace)
+            # Merge Asian Turkey and European Turkey (East Thrace) into single polygon
+            from shapely.ops import unary_union
             polys = sorted(country_geom_wgs84.geoms, key=lambda p: p.area, reverse=True)
-            keep_polys = [polys[0], polys[1]]
-            country_geom_wgs84 = MultiPolygon(keep_polys)
+            main_polys = MultiPolygon([polys[0], polys[1]])
+            # Buffer to bridge Bosphorus, merge, then unbuffer
+            buffered = main_polys.buffer(0.1)
+            merged = unary_union(buffered)
+            country_geom_wgs84 = merged.buffer(-0.1)
         else:
             country_geom_wgs84 = max(country_geom_wgs84.geoms, key=lambda p: p.area)
 

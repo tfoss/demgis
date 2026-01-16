@@ -267,17 +267,25 @@ def load_and_simplify_countries_eurasia(ne_path, dem_crs, region_countries):
                 geom = MultiPolygon(keep_polys)
                 print(f"  {country_name}: MultiPolygon detected, keeping {len(keep_polys)} polygons (mainland + Nakhchivan + eastern territory)")
             elif country_name == "Turkey":
-                # Keep both Asian Turkey (largest) and European Turkey (2nd largest, East Thrace)
-                # European Turkey borders Greece and Bulgaria west of the Bosphorus
+                # Merge Asian Turkey and European Turkey (East Thrace) into single polygon
+                # Bridge the Bosphorus strait by buffering slightly
                 from shapely.geometry import MultiPolygon
+                from shapely.ops import unary_union
 
                 polys = sorted(geom.geoms, key=lambda p: p.area, reverse=True)
 
-                # Keep 2 largest: Asian Turkey + European Turkey (East Thrace)
-                keep_polys = [polys[0], polys[1]]
+                # Take 2 largest: Asian Turkey + European Turkey (East Thrace)
+                main_polys = MultiPolygon([polys[0], polys[1]])
 
-                geom = MultiPolygon(keep_polys)
-                print(f"  {country_name}: MultiPolygon detected, keeping 2 polygons (Asian Turkey + European Turkey)")
+                # Buffer by ~10km in WGS84 degrees (~0.1°) to bridge Bosphorus, then merge
+                # The buffer will connect the two parts across the strait
+                buffered = main_polys.buffer(0.1)
+                merged = unary_union(buffered)
+
+                # Unbuffer to get back to original size (approximately)
+                geom = merged.buffer(-0.1)
+
+                print(f"  {country_name}: MultiPolygon detected, merged 2 polygons into single piece (bridged Bosphorus)")
             else:
                 # For other countries, take only the largest (mainland)
                 geom = max(geom.geoms, key=lambda p: p.area)

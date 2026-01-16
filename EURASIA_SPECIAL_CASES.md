@@ -138,32 +138,39 @@ if country_name == "Azerbaijan":
 
 **Result**: Azerbaijan includes all major territories (not just mainland)
 
-### 7. Turkey - European Part Missing
+### 7. Turkey - Merge Asian and European Parts
 
-**Issue**: Turkey spans both Asia and Europe. The European part (East Thrace) west of the Bosphorus was missing because script only kept largest polygon.
+**Issue**: Turkey spans both Asia and Europe. The two parts were separate polygons (Asian Turkey and European Turkey/East Thrace separated by Bosphorus strait). For 3D printing, a single connected piece is preferable.
 
 **Geography**: Turkey has 6 polygons:
 - Polygon 0 (largest): Asian Turkey (centroid 35.4°E, 39.0°N)
 - Polygon 1 (2nd): European Turkey/East Thrace (centroid 27.3°E, 41.3°N) - borders Greece and Bulgaria
 - Polygons 2-5: Small islands
 
-**Fix**: Special handling in `make_eurasia_all.py` to keep both main parts:
+**Fix**: Special handling in `make_eurasia_all.py` to merge the two main parts into single polygon:
 ```python
 elif country_name == "Turkey":
     polys = sorted(geom.geoms, key=lambda p: p.area, reverse=True)
-    keep_polys = [polys[0], polys[1]]  # Asian Turkey + European Turkey
-    geom = MultiPolygon(keep_polys)
+    main_polys = MultiPolygon([polys[0], polys[1]])
+
+    # Buffer by ~10km to bridge Bosphorus, merge, then unbuffer
+    buffered = main_polys.buffer(0.1)  # 0.1° ≈ 10km
+    merged = unary_union(buffered)
+    geom = merged.buffer(-0.1)
 ```
 
-**Result**: Turkey includes both Asian and European parts (complete country)
+**Result**: Turkey is now a single connected polygon (bridges Bosphorus strait)
+- Ideal for 3D printing as one piece
+- No separate parts to glue together
+- Bridge area appears as small "extra" in QC visualization
 
-**Coverage**: 99.6%
+**Coverage**: 99.7%
 
-**Generated**: `STLs_Turkey_Complete_20260116_111331_041944b/MiddleEast/Turkey_solid.stl`
+**Generated**: `STLs_Turkey_Merged_20260116_131315_bbf8ddb/MiddleEast/Turkey_solid.stl`
 
-**Also Updated**: `generate_qc_png.py` to handle Turkey's MultiPolygon correctly
+**Also Updated**: `generate_qc_png.py` to merge Turkey's polygons the same way
 
-**Commit**: (pending) - Add Turkey European part (East Thrace)
+**Commit**: (pending) - Turkey: Merge Asian and European parts into single piece
 
 ---
 
