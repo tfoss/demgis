@@ -2,6 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚀 START HERE - Resuming Work
+
+**If you're starting a new Claude Code session, read these first:**
+
+1. **`RESUME_GUIDE.md`** - Quick 2-minute overview of current state and recent work
+2. **`PROJECT_STATUS.md`** - Complete project status, what's done, what's pending
+3. **This file (CLAUDE.md)** - Technical details and guidelines (below)
+
+**Key facts**:
+- Eurasia is **COMPLETE**: 85 STLs in `GOLD_STLs/` directory
+- Recent work: Denmark island bridging (Jan 22, 2026)
+- Always use: `conda run -n demgis python3 <script>`
+- Critical files: `eurasia_2km_smooth_aea.tif`, `GOLD_STLs/`, `/Volumes/gray/DEM/eurasia_tiles/`
+
 ## Project Overview
 
 This is a DEM (Digital Elevation Model) processing pipeline for creating 3D-printable STL files of countries worldwide. The pipeline downloads elevation data, clips it to country boundaries, and generates watertight solid meshes with topographic relief suitable for 3D printing.
@@ -10,6 +24,28 @@ This is a DEM (Digital Elevation Model) processing pipeline for creating 3D-prin
 - **South America**: Complete (original implementation)
 - **Africa**: Complete
 - **Eurasia**: Unified mainland DEM covering Europe, Middle East, Caucasus, Central Asia, South Asia, Southeast Asia, East Asia (see Eurasia section below)
+
+## CRITICAL Workflow: Always Update GOLD_STLs
+
+**IMPORTANT**: Whenever you generate new or fixed STL files, you MUST immediately copy them to the GOLD_STLs directory:
+
+```bash
+# For individual country fixes
+cp <source_dir>/<region>/<country>_*.stl GOLD_STLs/<region>/
+
+# Example:
+cp STLs_Iceland_20260122_083507_e20a0b8/Iceland_starup.stl GOLD_STLs/Europe/
+```
+
+**Why this matters:**
+- GOLD_STLs contains the canonical "best version" of each country STL
+- Users rely on GOLD_STLs for 3D printing
+- Forgetting to update GOLD_STLs means fixes don't reach users
+
+**After copying, verify:**
+```bash
+ls -lh GOLD_STLs/<region>/<country>_*.stl
+```
 
 ## Python Environment
 
@@ -211,6 +247,40 @@ MASK_SMOOTH_SIGMA_PIX = 10.0    # Standard smoothing
 ```
 
 See `EURASIA_DEM_README.md` for complete documentation.
+
+## Island Bridging with Low-Level Geometry
+
+Some countries have large islands separated by narrow straits that should be connected in the 3D print. Two approaches exist:
+
+### 1. Buffer-Unbuffer (Simple Polygon Merge)
+Used in `make_eurasia_all.py` for Turkey:
+- Buffer country polygon by ~10km (0.1°)
+- Merge overlapping regions
+- Unbuffer back to original size
+- Good for very narrow straits where polygons nearly touch
+
+### 2. Explicit Low Bridge Geometry (Recommended)
+Used in `generate_denmark_islands.py`:
+- Creates bridge polygons connecting islands to mainland
+- Marks bridge regions in DEM at sea level (-250m)
+- Lowers bridge vertices to 1.5mm height (below 2.0mm base)
+- Results in visible thin bridges that can be painted blue (ocean color)
+
+**Denmark Special Case:**
+- Script: `generate_denmark_islands.py`
+- Connects 3 main islands: Jutland (mainland) + Zealand (Copenhagen) + Funen
+- Excludes Bornholm (distant Baltic island, 137km away)
+- 2 bridges: 48.2 km (Jutland-Funen) and 2.1 km (Funen-Zealand)
+- Bridge dimensions: 25km wide × 1.5mm high
+- Output: `Denmark_starup.stl` (20,322 faces, 993KB)
+
+**Key parameters for island bridging:**
+```python
+MIN_ISLAND_AREA_KM2 = 2500      # Only connect large islands (excludes small ones)
+BRIDGE_WIDTH_KM = 25.0          # Wide enough to be printable
+BRIDGE_HEIGHT_MM = 1.5          # Below BASE_THICKNESS_MM (2.0mm)
+MAX_BRIDGE_DISTANCE_KM = 275.0  # Don't bridge very distant islands
+```
 
 ## Boolean Operations and Mesh Repair
 
