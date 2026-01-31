@@ -25,6 +25,21 @@ This is a DEM (Digital Elevation Model) processing pipeline for creating 3D-prin
 - **Africa**: Complete
 - **Eurasia**: Unified mainland DEM covering Europe, Middle East, Caucasus, Central Asia, South Asia, Southeast Asia, East Asia (see Eurasia section below)
 
+## CRITICAL Workflow: Never Overwrite Output Files
+
+**IMPORTANT**: When iterating on STL generation strategies, ALWAYS create a new timestamped directory for each attempt. Never overwrite previous outputs — we need traceability to compare results.
+
+```bash
+# Good: new directory per attempt
+STLs_Ocean_v3_nk_recut_v5_20260130_143000/
+STLs_Ocean_v3_nk_recut_v6_20260130_150000/
+
+# Bad: overwriting previous output
+STLs_Ocean_v3_nk_recut_v4/Japan_ocean_korea_cutout.stl  # overwritten 3 times
+```
+
+Use `datetime.now().strftime('%Y%m%d_%H%M%S')` in scripts to auto-generate unique directory names.
+
 ## CRITICAL Workflow: Always Update GOLD_STLs
 
 **IMPORTANT**: Whenever you generate new or fixed STL files, you MUST immediately copy them to the GOLD_STLs directory:
