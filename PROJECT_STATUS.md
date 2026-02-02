@@ -207,19 +207,51 @@ conda run -n demgis python3 <script.py> [args]
 - QC PNG outputs
 - Intermediate DEM processing files
 
-## Next Steps / Potential Work
+## Ocean Tiles (Island-to-Mainland Connections)
 
-### Completed ✅
-- All 85 Eurasia mainland + separate region STLs
-- Iceland with separate DEM
-- Denmark with island bridging
-- Kosovo addition
+Ocean tiles fill the sea between island countries and the mainland, allowing printed pieces to fit together like a puzzle. Countries fit DOWN INTO the ocean tile.
 
-### Future Enhancements (Not Required)
-- Generate QC PNGs for all countries (some complex geometries cause topology errors)
-- Apply island bridging approach to other multi-island countries (Malaysia, etc.)
-- Generate remaining regions (Oceania, North America, etc.)
-- Add lake removal for large lakes (>500 km²)
+### Completed Ocean Tiles ✅
+- **Japan**: Sea of Japan with NK/SK GOLD cutouts + Tokyo star → `GOLD_STLs/EastAsia/Japan_ocean_korea_cutout.stl`
+- **Sri Lanka**: Palk Strait with India GOLD cutout + Colombo star hole → `GOLD_STLs/SouthAsia/Sri_Lanka_ocean_tile.stl`
+
+### Awaiting Slicer Verification
+- **Taiwan**: Taiwan Strait with China GOLD cutout + Taipei extruded star → `STLs_Ocean_Taiwan_20260201_143625/`
+- **Philippines**: South China Sea with China + Vietnam GOLD cutouts + Manila star → `STLs_Ocean_Philippines_20260202_151601/`
+
+### Ocean Tile Scripts
+- `generate_ocean_tile_v3.py` — Base ocean tile generator (ray-casting coast-meeting strategy)
+- `generate_island_ocean_tiles.py` — Generalized GOLD footprint cutout + capital star
+- `recut_ocean_v12.py` — Japan-specific ocean tile (original implementation)
+
+### Ocean Tile Technical Approach
+1. Generate base ocean via coast-meeting ray-casting (extends from island to mainland coast)
+2. Cut mainland GOLD STL footprints using centroid-aligned offsets
+3. Add capital star (extruded for coastal, hole for inland)
+4. Star radius: 6.0 × 0.33 = 1.98mm (post-scale, matches country STLs)
+
+## Next Steps / Roadmap
+
+### Immediate: Malaysia (Existing Eurasia DEM)
+- Malaysia (peninsula 100-104°E + Borneo 109-119°E) is within Eurasia DEM bounds
+- Previous generation failed — needs debugging (likely island filtering or equatorial projection)
+- Peninsula must fit with Thailand GOLD STL at shared border
+- Then: Malaysia ocean tile connecting peninsula to Borneo + mainland cutouts
+
+### Future: Oceania DEM (New DEM Required)
+Countries that need a NEW southern hemisphere DEM:
+- **Indonesia** (95-141°E, 11°S-6°N) — 90% south of equator
+- **Papua New Guinea** (141-156°E, 12°S-1°S) — entirely southern hemisphere
+- **Australia** (113-154°E, 44°S-10°S) — enormous, may need special handling
+- **New Zealand** (166-178°E, 47°S-34°S) — crosses dateline
+
+Proposed Oceania DEM projection:
+```
++proj=aea +lat_1=-20 +lat_2=-40 +lat_0=-30 +lon_0=135 +datum=WGS84
+```
+Coverage: 95-180°E, 55°S-8°N (~3,800 tiles, ~110GB raw)
+
+Scripts needed: `get_oceania_dem.py`, `build_oceania_dem_aea_2km.sh`, `make_oceania_all.py`
 
 ### Maintenance
 - Keep DEM tiles backed up (240GB+ raw data)

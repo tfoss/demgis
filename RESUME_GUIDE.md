@@ -170,18 +170,60 @@ ls /Volumes/gray/DEM/eurasia_tiles/ | wc -l
 
 ## Most Recent Session Summary
 
-**Date**: January 22, 2026
-**Focus**: Denmark island bridging
+**Date**: February 2, 2026
+**Focus**: Ocean tiles for island countries
 
-**Problem**: Denmark's 3 main islands needed physical connections but simple approaches failed (no 3D geometry, point contacts, or geometry collapse).
+### Completed Work
 
-**Solution**: Three-stage approach:
-1. Create explicit bridge polygons
-2. Expand coastlines at attachment points with circular buffers
-3. Smooth merged geometry to round sharp points
+**Japan Ocean Tile** (Jan 30-31, commits f5b46fe → 08e56ad, tag `good-japan-ocean-tile`):
+- Ocean tile fills Sea of Japan between Japan and NK/SK/Russia
+- NK + SK cutouts use GOLD STL footprints (centroid-aligned) so printed pieces fit
+- Tokyo extruded star at correct scale (1.98mm)
+- Script: `recut_ocean_v12.py`
+- Output: `GOLD_STLs/EastAsia/Japan_ocean_korea_cutout.stl`
 
-**Result**: Successfully generated Denmark STL with 2 low bridges (1.5mm height) connecting all 3 main islands with wide, strong attachment zones.
+**Island Ocean Tile Pipeline** (Feb 1-2, commit b141272):
+- Generalized pipeline: `generate_island_ocean_tiles.py` (cutouts + stars)
+- Base tiles via `generate_ocean_tile_v3.py` (ray-casting coast-meeting strategy)
+- **Sri Lanka**: India cutout + Colombo star hole → `GOLD_STLs/SouthAsia/Sri_Lanka_ocean_tile.stl` ✅
+- **Taiwan**: China cutout + Taipei extruded star → awaiting slicer check
+- **Philippines**: China + Vietnam cutouts + Manila extruded star → awaiting slicer check
 
-**Committed**: `generate_denmark_connected.py`, `DENMARK_ISLAND_BRIDGING.md`, updated `copy_gold_stls.sh`
+### In Progress: Taiwan & Philippines Verification
+- Taiwan output: `STLs_Ocean_Taiwan_20260201_143625/Taiwan_ocean_tile.stl`
+- Philippines output: `STLs_Ocean_Philippines_20260202_151601/Philippines_ocean_tile.stl`
+- Both need slicer verification before copying to GOLD_STLs
 
-**Status**: Eurasia generation **COMPLETE** - all 85 STLs in GOLD_STLs
+### Next Up: Malaysia on Existing Eurasia DEM
+- Malaysia (peninsula + Borneo) is within Eurasia DEM bounds but generation failed previously
+- Debug why generation failed (likely island filtering or equatorial projection issues)
+- Malaysia peninsula must fit with Thailand GOLD STL
+
+### Future: Oceania DEM for Southern Hemisphere
+Countries needing a NEW DEM (all south of equator / beyond Eurasia bounds):
+- Indonesia (95-141°E, 11°S-6°N) — mostly south of equator
+- Papua New Guinea (141-156°E, 12°S-1°S)
+- Australia (113-154°E, 44°S-10°S)
+- New Zealand (166-178°E, 47°S-34°S)
+
+Requires: New Oceania DEM with southern hemisphere Albers projection:
+```
++proj=aea +lat_1=-20 +lat_2=-40 +lat_0=-30 +lon_0=135 +datum=WGS84
+```
+Scripts needed: `get_oceania_dem.py`, `build_oceania_dem_aea_2km.sh`, `make_oceania_all.py`
+
+### Key Technical Details
+
+**Ocean tile approach**:
+1. Generate base ocean tile via coast-meeting ray-casting (`generate_ocean_tile_v3.py`)
+2. Cut GOLD STL footprints using centroid-aligned offsets (`generate_island_ocean_tiles.py`)
+3. Add capital star (extruded for coastal, hole for inland)
+
+**Centroid alignment** (proven for Japan/Korea):
+- Extract GOLD STL footprint at Z=0.5mm cross-section
+- Transform NE polygon to ocean MM coords via DEM CRS
+- Offset = NE_centroid - GOLD_centroid (robust to shape differences)
+
+**Star sizing**: `STAR_RADIUS_MM = 6.0 * GLOBAL_XY_SCALE = 1.98mm` (post-scale)
+
+**Status**: Eurasia generation **COMPLETE** - 85+ STLs in GOLD_STLs, ocean tiles in progress
