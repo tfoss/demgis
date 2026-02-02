@@ -60,9 +60,15 @@ COAST_MEETING_COUNTRIES = {
     "Japan": ["Russia", "South Korea", "North Korea", "China"],
     "Taiwan": ["China"],
     "Sri Lanka": ["India"],
+    "Philippines": ["China", "Vietnam"],
 }
 
-ARCHIPELAGO_COUNTRIES = ["Indonesia", "Philippines", "Malaysia"]
+# Per-country overrides for ray-casting search distance (default 300km)
+COAST_SEARCH_BUFFER_KM = {
+    "Philippines": 1000,  # ~900km to Vietnam coast
+}
+
+ARCHIPELAGO_COUNTRIES = ["Indonesia", "Malaysia"]
 
 # Ocean buffer for outer edges of archipelagos (km)
 ARCHIPELAGO_OUTER_BUFFER_KM = 150.0  # Increased for better ocean coverage
@@ -149,17 +155,22 @@ def compute_coast_meeting_tile(island_geom, island_name, mainland_geoms, regiona
         print(f"    WARNING: No mainland in clip region!")
         return island_geom.buffer(1.0).intersection(bbox_poly)
 
-    # Filter out islands - keep only the largest connected landmass (continental mainland)
-    # This removes Sakhalin, etc.
+    # Filter out small islands from mainland - keep large landmasses
+    # This removes Sakhalin, etc. but keeps multiple mainland neighbors (e.g., China + Vietnam)
+    MIN_MAINLAND_AREA_KM2 = 100000  # Keep landmasses > 100k km²
     if mainland_clipped.geom_type == "MultiPolygon":
         polygons = list(mainland_clipped.geoms)
-        # Calculate area for each polygon and keep only the largest
         areas = [(p, calculate_area_km2(p)) for p in polygons]
         areas.sort(key=lambda x: x[1], reverse=True)
-        # Keep the largest polygon (continental mainland)
-        mainland_clipped = areas[0][0]
+        # Keep all polygons above threshold, or at minimum the largest
+        kept = [p for p, a in areas if a >= MIN_MAINLAND_AREA_KM2]
+        if not kept:
+            kept = [areas[0][0]]
+        excluded = len(areas) - len(kept)
+        mainland_clipped = unary_union(kept)
+        total_area = sum(calculate_area_km2(p) for p in kept)
         print(
-            f"    Filtered to mainland only ({areas[0][1]:,.0f} km², excluded {len(areas) - 1} islands)"
+            f"    Filtered to {len(kept)} mainland masses ({total_area:,.0f} km², excluded {excluded} islands)"
         )
 
     # Separate main islands (>10,000 km²) from small islands for reporting
@@ -191,7 +202,7 @@ def compute_coast_meeting_tile(island_geom, island_name, mainland_geoms, regiona
     # Ray endpoints are fixed based on main island bounds + buffer
     # West rays stop at: main_islands_west - buffer_km
     # East rays stop at: main_islands_east + buffer_km
-    search_buffer_km = 300  # How far past main island bounds to search
+    search_buffer_km = COAST_SEARCH_BUFFER_KM.get(island_name, 300)
     search_buffer_deg = search_buffer_km / 111.0
     west_limit = (
         mb[0] - search_buffer_deg
