@@ -11,31 +11,31 @@ Generated: Wed Jan 14 19:24:53 EST 2026
 - [ ] Belgium
 - [ ] Bosnia and Herzegovina
 - [ ] Bulgaria
-- [ ] Croatia
+- [x ] Croatia
 - [ ] Denmark
-- [ ] Estonia
+- [x ] Estonia
 - [ ] Finland
 - [ ] France
 - [ ] Germany
 - [ ] Greece
-- [ ] Hungary
+- [x ] Hungary
 - [ ] Ireland
 - [ ] Italy
-- [ ] Latvia
-- [ ] Lithuania
+- [x ] Latvia
+- [x ] Lithuania
 - [ ] Moldova
 - [ ] Montenegro
 - [ ] Netherlands
 - [ ] North Macedonia
 - [ ] Norway
 - [ ] Poland
-- [ ] Portugal
+- [x ] Portugal
 - [ ] Romania
 - [ ] Russia
 - [ ] Slovakia
 - [ ] Slovenia
 - [ ] Spain
-- [ ] Sweden
+- [x ] Sweden
 - [ ] Switzerland
 - [ ] Ukraine
 - [ ] United Kingdom
@@ -46,14 +46,14 @@ Generated: Wed Jan 14 19:24:53 EST 2026
 - [ ] Egypt
 - [ ] Iran
 - [ ] Iraq
-- [ ] Israel
-- [ ] Jordan
+- [x ] Israel
+- [x ] Jordan
 - [ ] Kuwait
 - [ ] Lebanon
-- [ ] Oman
+- [x ] Oman
 - [ ] Palestine
 - [ ] Qatar
-- [ ] Saudi Arabia
+- [x ] Saudi Arabia
 - [ ] Syria
 - [ ] Turkey
 - [ ] United Arab Emirates
@@ -61,9 +61,9 @@ Generated: Wed Jan 14 19:24:53 EST 2026
 
 ### Caucasus
 
-- [ ] Armenia
+- [x ] Armenia
 - [ ] Azerbaijan
-- [ ] Georgia
+- [x ] Georgia
 
 ### CentralAsia
 
@@ -71,8 +71,8 @@ Generated: Wed Jan 14 19:24:53 EST 2026
 - [ ] Kazakhstan
 - [ ] Kyrgyzstan
 - [ ] Tajikistan
-- [ ] Turkmenistan
-- [ ] Uzbekistan
+- [x ] Turkmenistan
+- [x ] Uzbekistan
 
 ### SouthAsia
 

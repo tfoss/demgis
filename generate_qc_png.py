@@ -373,6 +373,15 @@ def main():
             buffered = main_polys.buffer(0.1)
             merged = unary_union(buffered)
             country_geom_wgs84 = merged.buffer(-0.1)
+        elif args.country == "Denmark":
+            # Merge Jutland + Zealand + Funen into single polygon
+            from shapely.ops import unary_union
+            polys = sorted(country_geom_wgs84.geoms, key=lambda p: p.area, reverse=True)
+            main_polys = MultiPolygon([polys[0], polys[1], polys[2]])
+            # Buffer to bridge straits, merge, then unbuffer
+            buffered = main_polys.buffer(0.1)
+            merged = unary_union(buffered)
+            country_geom_wgs84 = merged.buffer(-0.1)
         else:
             country_geom_wgs84 = max(country_geom_wgs84.geoms, key=lambda p: p.area)
 

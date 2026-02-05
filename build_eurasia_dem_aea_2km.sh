@@ -2,7 +2,7 @@
 # Build unified Eurasia mainland DEM at 2km resolution with Albers Equal Area Conic projection
 #
 # Coverage: Europe + Middle East + Caucasus + Central/South/Southeast/East Asia (mainland)
-# Geographic extent: 10°W to 150°E, 8°N to 72°N
+# Geographic extent: 25°W to 150°E, 5°N to 72°N (extended for Iceland and Sri Lanka)
 #
 # This ensures ALL mainland Eurasia countries use the same DEM and projection,
 # eliminating boundary mismatch issues between adjacent countries.
@@ -12,8 +12,15 @@
 # 2. Merges all tiles into unified mosaic
 # 3. Resamples to 2km resolution
 # 4. Reprojects to Albers Equal Area Conic optimized for Eurasia
+#
+# Safety: Builds to temporary files, then atomically replaces old DEM
+# (old DEM archived with timestamp+hash for rollback)
 
 set -e
+
+# Generate timestamp and git hash for archiving old DEM
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+GITHASH=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
 
 echo "============================================================"
 echo "Building Unified Eurasia Mainland DEM"
@@ -85,8 +92,8 @@ echo "  (This may take 10-30 minutes depending on coverage)"
 gdalwarp -r average -tr 0.02 0.02 \
          -co TILED=YES \
          -co COMPRESS=LZW \
-         eurasia_raw.vrt eurasia_2km.tif
-echo "  ✓ 2km mosaic created: eurasia_2km.tif"
+         eurasia_raw.vrt eurasia_2km.new.tif
+echo "  ✓ 2km mosaic created: eurasia_2km.new.tif"
 echo
 
 # Step 4: Apply smoothing
@@ -94,13 +101,13 @@ echo "Step 4: Applying smoothing filter..."
 gdalwarp -r average -tr 0.02 0.02 \
          -co TILED=YES \
          -co COMPRESS=LZW \
-         eurasia_2km.tif eurasia_2km_smooth.tif
-echo "  ✓ Smoothed mosaic: eurasia_2km_smooth.tif"
+         eurasia_2km.new.tif eurasia_2km_smooth.new.tif
+echo "  ✓ Smoothed mosaic: eurasia_2km_smooth.new.tif"
 echo
 
 # Step 5: Reproject to Albers Equal Area Conic for Eurasia
 echo "Step 5: Reprojecting to Albers Equal Area Conic..."
-echo "  Projection optimized for 10°W-150°E, 8°N-72°N"
+echo "  Projection optimized for 25°W-150°E, 5°N-72°N"
 
 # Unified Eurasia Albers Equal Area Conic projection
 # Standard parallels: 25°N and 60°N
@@ -110,7 +117,7 @@ echo "  Projection optimized for 10°W-150°E, 8°N-72°N"
 # Latitude of origin: 42.5°N (midpoint between standard parallels)
 #
 # This projection minimizes distortion across the entire mainland Eurasia region
-# from Portugal to eastern China, Egypt to northern Russia.
+# from Iceland to eastern China, Sri Lanka to northern Russia.
 
 gdalwarp \
   -s_srs EPSG:4326 \
@@ -119,10 +126,37 @@ gdalwarp \
   -r average \
   -co TILED=YES \
   -co COMPRESS=LZW \
-  eurasia_2km_smooth.tif \
-  eurasia_2km_smooth_aea.tif
+  eurasia_2km_smooth.new.tif \
+  eurasia_2km_smooth_aea.new.tif
 
-echo "  ✓ Final DEM: eurasia_2km_smooth_aea.tif"
+echo "  ✓ Final DEM: eurasia_2km_smooth_aea.new.tif"
+echo
+
+# Step 6: Atomically replace old DEM with new one
+echo "Step 6: Installing new DEM (archiving old)..."
+
+# Archive old DEM if it exists
+if [ -f "eurasia_2km_smooth_aea.tif" ]; then
+    ARCHIVE_NAME="eurasia_2km_smooth_aea_${TIMESTAMP}_${GITHASH}.tif"
+    mv eurasia_2km_smooth_aea.tif "$ARCHIVE_NAME"
+    echo "  ✓ Archived old DEM: $ARCHIVE_NAME"
+fi
+
+# Install new DEM
+mv eurasia_2km_smooth_aea.new.tif eurasia_2km_smooth_aea.tif
+echo "  ✓ Installed new DEM: eurasia_2km_smooth_aea.tif"
+
+# Also replace intermediate files (for debugging/inspection)
+if [ -f "eurasia_2km.tif" ]; then
+    mv eurasia_2km.tif "eurasia_2km_${TIMESTAMP}_${GITHASH}.tif" 2>/dev/null || true
+fi
+mv eurasia_2km.new.tif eurasia_2km.tif
+
+if [ -f "eurasia_2km_smooth.tif" ]; then
+    mv eurasia_2km_smooth.tif "eurasia_2km_smooth_${TIMESTAMP}_${GITHASH}.tif" 2>/dev/null || true
+fi
+mv eurasia_2km_smooth.new.tif eurasia_2km_smooth.tif
+
 echo
 
 # Display file info
@@ -140,6 +174,7 @@ echo "  Central meridian: 70°E"
 echo "  Resolution: 2000m x 2000m"
 echo
 echo "Coverage area:"
+echo "  Geographic extent: 25°W to 150°E, 5°N to 72°N"
 echo "  Europe: Iceland, Portugal to Urals"
 echo "  Middle East: Egypt to Iran"
 echo "  Caucasus: Georgia, Armenia, Azerbaijan"

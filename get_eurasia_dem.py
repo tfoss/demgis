@@ -15,7 +15,7 @@ Coverage:
 - East Asia: China, Mongolia, Korea (~73°E to 135°E)
 - Russia: Mainland up to 72°N
 
-Total coverage: 10°W to 150°E, 8°N to 72°N
+Total coverage: 25°W to 150°E, 5°N to 72°N (extended west to -25°W for Iceland, south to 5°N for Sri Lanka)
 
 This ensures a single unified DEM with consistent projection for all mainland
 countries, eliminating boundary mismatch issues.
@@ -24,9 +24,9 @@ countries, eliminating boundary mismatch issues.
 import subprocess
 from pathlib import Path
 
-# Eurasia mainland bounding box
-LON_RANGE = range(-10, 151)  # -10°W to 150°E (161 degrees)
-LAT_RANGE = range(8, 73)      # 8°N to 72°N (65 degrees)
+# Eurasia mainland bounding box (including Iceland)
+LON_RANGE = range(-25, 151)  # -25°W to 150°E (176 degrees) - Extended to -25°W for Iceland
+LAT_RANGE = range(5, 73)      # 5°N to 72°N (68 degrees) - Extended to 5°N for Sri Lanka
 
 BASE_URL_30M = "https://copernicus-dem-30m.s3.amazonaws.com"
 BASE_URL_90M = "https://copernicus-dem-90m.s3.amazonaws.com"

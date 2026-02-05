@@ -36,6 +36,55 @@ This is documented in `CLAUDE.md` but worth repeating here.
 
 **Commit**: `4e63a67` - Extend Caucasus DEM coverage to fix Azerbaijan eastern region
 
+### 2. Sri Lanka - Extended Southern Coverage
+
+**Issue**: Original Eurasia DEM coverage started at 8°N, but Sri Lanka extends down to 5.9°N. The southern ~3° of the country was outside DEM bounds, resulting in only 29.5% DEM coverage and a severely truncated STL (only 33.6% of expected footprint).
+
+**Fix**: Extended latitude coverage to 5°N-72°N in `get_eurasia_dem.py`
+- Changed LAT_RANGE from `range(8, 73)` to `range(5, 73)`
+- Added 252 additional 30m tiles for latitudes 5°N, 6°N, 7°N
+- Tiles: N05-N07, E(-10)-E150 (full longitudinal range)
+- Rebuilt `eurasia_2km_smooth_aea.tif` with extended coverage
+
+**Result**: Sri Lanka DEM coverage expected to improve from 29.5% to 100.0%
+
+**Files Modified**:
+- `get_eurasia_dem.py`: Line 28, extended LAT_RANGE to start at 5°N
+- `get_eurasia_dem.py`: Line 17, updated documentation to reflect 5°N-72°N coverage
+- `eurasia_s5cmd_30m_list.txt`: Updated from 8335 to 8587 tiles
+
+**Affected Countries**: Sri Lanka is the primary beneficiary, but this also provides better coverage for southern regions of:
+- India (Tamil Nadu, Kerala)
+- Myanmar (southern coastal regions)
+- Thailand (southern peninsula)
+- Malaysia (northern regions)
+
+**Commit**: (pending) - Extend Eurasia DEM to 5°N for complete Sri Lanka coverage
+
+### 3. Iceland - Projection Incompatibility Issue
+
+**Issue**: Iceland extends from 24.5°W to 13.5°W, but the Albers Equal Area Conic projection (centered at 70°E) cannot handle Iceland's location 95° west of the central meridian. Severe projection distortion prevents proper coverage detection.
+
+**Attempted Fix**: Extended DEM coverage to 25°W-150°E and downloaded all tiles
+- Changed LON_RANGE from `range(-10, 151)` to `range(-25, 151)`
+- Added 233 additional 30m tiles for longitudes 25°W through 11°W
+- Tiles successfully downloaded and merged in WGS84
+
+**Problem**: When reprojecting to Albers Equal Area Conic, Iceland's extreme western position (95° from central meridian at 70°E) causes the projection to fail for Iceland's location. The geometry doesn't intersect with the reprojected DEM.
+
+**Status**: **Unsolved** - Iceland requires different approach
+
+**Possible Solutions**:
+1. Generate Iceland with a separate DEM using a North Atlantic-centered projection (e.g., polar stereographic or Lambert Conformal Conic)
+2. Use WGS84 directly for Iceland instead of Albers Equal Area
+3. Create a separate Iceland-specific DEM with its own projection optimized for 25°W-13°W
+
+**Files Modified**:
+- `get_eurasia_dem.py`: Extended to -25°W but projection incompatible
+- Tiles downloaded but not usable with current Albers projection
+
+**Commit**: (pending) - Document Iceland projection issue for future work
+
 ---
 
 ## Star Type Corrections
@@ -68,9 +117,21 @@ This is documented in `CLAUDE.md` but worth repeating here.
 
 **Commit**: `6eab876` - Azerbaijan: Change to extruded star for coastal capital Baku
 
-### 4. Coastal Capitals List
+### 4. Thailand - Inland Capital (Cut Star)
 
-**Current list** (26 countries with extruded stars):
+**Issue**: Thailand was incorrectly using extruded star. Bangkok is on the Chao Phraya River delta, about 25-30km inland from the Gulf of Thailand coast - similar distance to Rome from the coast.
+
+**Fix**: Removed Thailand from COASTAL_CAPITALS set in `make_eurasia_all.py`
+
+**Result**: Thailand now uses cut star hole (correct for inland capital)
+
+**Regeneration Required**: Yes - need to regenerate with cut star
+
+**Commit**: (pending) - Fix Thailand star type for inland capital Bangkok
+
+### 5. Coastal Capitals List
+
+**Current list** (25 countries with extruded stars):
 
 **Europe**: Portugal, United Kingdom, Ireland, Netherlands, Iceland, Norway, Sweden, Finland, Denmark, Estonia, Latvia, Greece
 
@@ -80,17 +141,19 @@ This is documented in `CLAUDE.md` but worth repeating here.
 
 **South Asia**: Sri Lanka, Maldives
 
-**Southeast Asia**: Thailand, Singapore, Brunei, Philippines, Indonesia, Timor-Leste
+**Southeast Asia**: Singapore, Brunei, Philippines, Indonesia, Timor-Leste
 
 **East Asia**: Japan
 
 All other capitals use cut star holes (inland).
 
+**Note**: Thailand removed from coastal capitals list (Bangkok is ~25-30km inland).
+
 ---
 
 ## Geometry Fixes
 
-### 5. Kazakhstan - Baikonur Cosmodrome Hole
+### 6. Kazakhstan - Baikonur Cosmodrome Hole
 
 **Issue**: Natural Earth shapefile has a hole in Kazakhstan where Baikonur Cosmodrome is located (leased to Russia). This creates an unwanted void in the STL.
 
@@ -118,7 +181,7 @@ if country_name == "Kazakhstan" and geom.geom_type == "Polygon":
 
 **Commit**: (pending) - Add Kazakhstan Baikonur hole filling to Eurasia pipeline
 
-### 6. Azerbaijan - MultiPolygon Handling
+### 7. Azerbaijan - MultiPolygon Handling
 
 **Issue**: Azerbaijan has multiple disconnected territories:
 - Mainland (largest)
@@ -138,7 +201,7 @@ if country_name == "Azerbaijan":
 
 **Result**: Azerbaijan includes all major territories (not just mainland)
 
-### 7. Turkey - Merge Asian and European Parts
+### 8. Turkey - Merge Asian and European Parts
 
 **Issue**: Turkey spans both Asia and Europe. The two parts were separate polygons (Asian Turkey and European Turkey/East Thrace separated by Bosphorus strait). For 3D printing, a single connected piece is preferable.
 
@@ -172,11 +235,43 @@ elif country_name == "Turkey":
 
 **Commit**: (pending) - Turkey: Merge Asian and European parts into single piece
 
+### 9. Denmark - Merge Main Islands
+
+**Issue**: Denmark consists of 15 separate polygons (Jutland peninsula + multiple islands). The three largest pieces (Jutland, Zealand, Funen) were separated by the Great Belt and Øresund straits. For 3D printing, a single connected piece is preferable.
+
+**Geography**: Denmark has 15 polygons:
+- Polygon 0 (largest): Jutland peninsula (9.4°E, 56.2°N)
+- Polygon 1 (2nd): Zealand/Sjælland where Copenhagen is (11.9°E, 55.5°N)
+- Polygon 2 (3rd): Funen/Fyn (10.3°E, 55.3°N)
+- Polygons 3-14: Smaller islands (Lolland, Bornholm, etc.)
+
+**Fix**: Special handling in `make_eurasia_all.py` and `generate_qc_png.py` to merge the three main parts:
+```python
+elif country_name == "Denmark":
+    polys = sorted(geom.geoms, key=lambda p: p.area, reverse=True)
+    main_polys = MultiPolygon([polys[0], polys[1], polys[2]])
+
+    # Buffer by ~10km to bridge straits, merge, then unbuffer
+    buffered = main_polys.buffer(0.1)  # 0.1° ≈ 10km
+    merged = unary_union(buffered)
+    geom = merged.buffer(-0.1)
+```
+
+**Result**: Denmark is now a single connected polygon (Jutland + Zealand + Funen)
+- Ideal for 3D printing as one piece
+- No separate parts to glue together
+- Bridge areas appear as small "extra" in QC visualization
+- Excludes Bornholm and smaller islands
+
+**Regeneration Required**: Yes - need to regenerate with merge code
+
+**Commit**: (pending) - Denmark: Merge Jutland + Zealand + Funen into single piece
+
 ---
 
 ## Country Name Mismatches
 
-### 8. Serbia - Natural Earth Name
+### 10. Serbia - Natural Earth Name
 
 **Issue**: Script used "Serbia" but Natural Earth data has "Republic of Serbia"
 
@@ -192,7 +287,7 @@ elif country_name == "Turkey":
 
 **Commit**: `041944b` - Fix Kazakhstan Baikonur hole and Serbia name mismatch + comprehensive docs
 
-### 9. Czechia - Natural Earth Name
+### 11. Czechia - Natural Earth Name
 
 **Issue**: Script used "Czech Republic" but Natural Earth data uses "Czechia" (short name officially adopted in 2016)
 
@@ -208,11 +303,50 @@ elif country_name == "Turkey":
 
 **Commit**: (pending) - Fix Czechia name mismatch with Natural Earth data
 
+### 12. Kosovo - Missing from Initial Generation
+
+**Issue**: Kosovo exists in Natural Earth shapefile but was not included in the initial Eurasia regions list.
+
+**Fix**: Added Kosovo to Europe region in `make_eurasia_all.py`:
+- Added "Kosovo" to EURASIA_REGIONS Europe list
+- Added capital: Pristina (21.1655°E, 42.6629°N)
+
+**Result**: Kosovo will be generated with inland capital (cut star hole)
+
+**Bounds**: 20.0°E to 21.8°E, 41.8°N to 43.3°N
+
+**Regeneration Required**: Yes - first generation pending
+
+**Commit**: (pending) - Add Kosovo to Eurasia regions
+
+### 13. Luxembourg - Very Small Country
+
+**Issue**: Luxembourg failed to generate with error "No faces built from DEM". The country is very small (~80km × 60km, only 41×33 pixels in 2km DEM) and was filtered out by MIN_COMPONENT_PIXELS threshold (1000) after mask smoothing.
+
+**Fix**: Created custom generation script `generate_luxembourg.py` with reduced parameters:
+```python
+MASK_SMOOTH_SIGMA_PIX = 2.0  # Reduced from 10.0
+MIN_COMPONENT_PIXELS = 100    # Reduced from 1000
+XY_STEP = 1                   # No decimation for small country
+```
+
+**Result**: Luxembourg generates successfully with cut star hole (Luxembourg City is inland)
+
+**Coverage**: 96.7%
+
+**Size**: Very small (~26mm × 20mm estimated)
+
+**Generated**: `STLs_Luxembourg_20260118_134403_e20a0b8/Luxembourg_solid.stl`
+
+**Script**: `generate_luxembourg.py`
+
+**Commit**: (pending) - Add Luxembourg custom generation for very small country
+
 ---
 
 ## Separate Region STLs
 
-### 10. Kaliningrad - Russia's Baltic Exclave
+### 14. Kaliningrad - Russia's Baltic Exclave
 
 **Purpose**: Generate Kaliningrad separately from mainland Russia for easier printing
 
@@ -233,7 +367,7 @@ conda run -n demgis python3 generate_kaliningrad.py
 
 **Commit**: `caa45ed` - Add Kaliningrad separate STL generation
 
-### 11. Northern Ireland - UK Region
+### 15. Northern Ireland - UK Region
 
 **Purpose**: Generate Northern Ireland separately from Great Britain for easier printing
 
@@ -258,7 +392,7 @@ conda run -n demgis python3 generate_northern_ireland.py
 
 ## QC PNG Generation
 
-### 12. QC Coverage Visualization
+### 16. QC Coverage Visualization
 
 **Tool**: `generate_qc_png.py` creates alignment visualization
 
@@ -316,6 +450,16 @@ STAR_RADIUS_MM = 2.0            # Capital star size
   - Status: Failed generation - "No faces built from DEM"
   - Solution needed: Either extend DEM eastward or handle separately
 
+### DEM Coverage Issues - Fixed
+
+- **Iceland**: Fixed - DEM extended westward from -10°W to -25°W
+- **Sri Lanka**: Fixed - DEM extended southward from 8°N to 5°N
+- **Luxembourg**: Fixed with custom generation script (reduced MIN_COMPONENT_PIXELS and MASK_SMOOTH_SIGMA_PIX)
+
+### Very Small Countries
+
+- **Other micro-states**: Monaco, Liechtenstein, San Marino, Vatican City not included (too small for 2km DEM)
+
 ### Islands Not Included
 
 Most countries use mainland only (largest polygon). Islands are excluded unless specifically handled (like Azerbaijan's special case).
@@ -349,6 +493,7 @@ conda run -n demgis python3 make_eurasia_all.py \
 
 - `generate_kaliningrad.py`: Separate Kaliningrad STL
 - `generate_northern_ireland.py`: Separate Northern Ireland STL
+- `generate_luxembourg.py`: Luxembourg with reduced smoothing for very small country
 - `generate_qc_png.py`: QC visualization
 - `get_eurasia_dem.py`: Generate tile download lists
 - `build_eurasia_dem_aea_2km.sh`: Build unified DEM from tiles
@@ -357,16 +502,23 @@ conda run -n demgis python3 make_eurasia_all.py \
 
 ## Tracking Files
 
-### Current Status (as of 2026-01-16)
+### Current Status (as of 2026-01-22)
 
-**Total Countries**: 78 successfully generated
+**Total Countries**: 81 successfully generated (1 unsolved)
 - 77 from main Eurasia generation
-- 1 fixed (Serbia name mismatch)
+- 4 regenerated with fixes (Denmark, Thailand, Sri Lanka, Kosovo)
+- 1 custom (Luxembourg - very small country)
+- **Iceland unsolved** - Albers projection incompatible with Iceland's western location; requires separate DEM/projection approach
 
 **STL Directories**:
 1. `STLs_Eurasia_Full_20260113_210127_5c16017/` - Initial full generation (46 countries)
 2. `STLs_Eurasia_CoastalFix_20260114_144757_753fc5f/` - Coastal capitals corrections (29 countries)
-3. Individual fix directories (Yemen, Azerbaijan, Kazakhstan, Serbia, Kaliningrad, Northern Ireland)
+3. `STLs_Denmark_Thailand_Fix_20260121_083857_e20a0b8/` - Denmark 3-island merge + Thailand star fix (2 countries)
+4. `STLs_SriLanka_Iceland_20260121_120545_e20a0b8/` - Sri Lanka extended DEM coverage (1 country)
+5. `STLs_Iceland_Kosovo_20260122_073114_e20a0b8/` - Kosovo (1 country, Iceland failed)
+6. Individual fix directories (Yemen, Azerbaijan, Luxembourg, Kazakhstan, Serbia, Kaliningrad, Northern Ireland)
+
+**GOLD_STLs**: 84 STLs organized by region (ready for printing/reference)
 
 **Reference Files**:
 - `EURASIA_STL_CHECKLIST.md`: Checkbox list for tracking prints

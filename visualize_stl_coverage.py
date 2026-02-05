@@ -19,16 +19,24 @@ import numpy as np
 import rasterio
 import trimesh
 from matplotlib.patches import Polygon as MplPolygon
+from rasterio.mask import mask
 from shapely.geometry import MultiPolygon, Point, Polygon
 from shapely.ops import unary_union
 
 
-def get_stl_base_polygon(stl_path, dem_transform, xy_mm_per_pixel):
+def get_stl_base_polygon(
+    stl_path, clipped_transform, xy_mm_per_pixel, xy_step, dem_path, country_boundary
+):
     """
     Extract the base footprint of an STL by taking a horizontal slice
     at the minimum Z level and converting back to geographic coordinates.
+
+    CRITICAL: Must use the CLIPPED DEM transform, not the full DEM transform!
+    The STL coordinates are relative to the clipped region starting at (0,0).
+    The mesh is built with step_mm = xy_mm_per_pixel * xy_step spacing.
     """
-    mesh = trimesh.load(stl_path)
+    # Load STL without processing to preserve original coordinates
+    mesh = trimesh.load(stl_path, process=False)
 
     # Get base slice (just above minimum Z)
     z_min = mesh.vertices[:, 2].min()
@@ -61,9 +69,9 @@ def get_stl_base_polygon(stl_path, dem_transform, xy_mm_per_pixel):
     # Combine into single geometry
     stl_footprint_mm = unary_union(polygons)
 
-    # Convert from mm back to DEM CRS coordinates
-    # mm -> pixels: divide by xy_mm_per_pixel
-    # pixels -> CRS: use affine transform directly
+    # Convert from mm back to DEM CRS coordinates using CLIPPED transform
+    # The country boundary is converted using xy_mm_per_pixel (not step_mm)
+    # in get_country_geom_in_mm(), so we use the same here
     from shapely.ops import transform as shapely_transform
 
     def mm_to_crs(x, y):
@@ -71,14 +79,22 @@ def get_stl_base_polygon(stl_path, dem_transform, xy_mm_per_pixel):
         x_arr = np.atleast_1d(x)
         y_arr = np.atleast_1d(y)
 
-        # Convert mm to pixel coordinates
+        # Convert mm to pixel coordinates (same as get_country_geom_in_mm does)
         col_px = x_arr / xy_mm_per_pixel
         row_px = y_arr / xy_mm_per_pixel
 
-        # Convert pixel coordinates to CRS using affine transform
-        # affine: (col, row) -> (x, y)
-        crs_x = dem_transform.c + col_px * dem_transform.a + row_px * dem_transform.b
-        crs_y = dem_transform.f + col_px * dem_transform.d + row_px * dem_transform.e
+        # Convert pixel coordinates to CRS using CLIPPED affine transform
+        # This accounts for the offset created by rasterio.mask() clipping
+        crs_x = (
+            clipped_transform.c
+            + col_px * clipped_transform.a
+            + row_px * clipped_transform.b
+        )
+        crs_y = (
+            clipped_transform.f
+            + col_px * clipped_transform.d
+            + row_px * clipped_transform.e
+        )
 
         # Return same shape as input
         if np.isscalar(x):
@@ -94,8 +110,10 @@ def visualize_coverage_qc(
     country_name,
     country_boundary,
     stl_path,
-    dem_transform,
+    dem_path,
+    dem_crs,
     xy_mm_per_pixel,
+    xy_step,
     output_path,
 ):
     """
@@ -103,8 +121,26 @@ def visualize_coverage_qc(
     """
     print(f"\nGenerating QC visualization for {country_name}...")
 
-    # Get STL footprint
-    stl_footprint = get_stl_base_polygon(stl_path, dem_transform, xy_mm_per_pixel)
+    # CRITICAL: Re-clip the DEM to get the same transform used during STL generation
+    # This is the key fix - we need the clipped transform, not the full DEM transform
+    with rasterio.open(dem_path) as dem_src:
+        # Clip DEM to country boundary (same as done during STL generation)
+        out, clipped_transform = mask(
+            dem_src, [country_boundary], crop=True, nodata=0, filled=True
+        )
+
+    print(f"  Clipped DEM transform: {clipped_transform}")
+    print(f"  Transform origin: ({clipped_transform.c:.2f}, {clipped_transform.f:.2f})")
+
+    # Get STL footprint using the clipped transform
+    stl_footprint = get_stl_base_polygon(
+        stl_path,
+        clipped_transform,
+        xy_mm_per_pixel,
+        xy_step,
+        dem_path,
+        country_boundary,
+    )
 
     if stl_footprint is None:
         print("✗ Failed to extract STL footprint")
@@ -122,14 +158,14 @@ def visualize_coverage_qc(
     extra_area = extra.area if not extra.is_empty else 0
     coverage_pct = (footprint_area / boundary_area) * 100
 
-    print(f"  Country boundary area: {boundary_area:.2f} sq degrees")
-    print(f"  STL footprint area: {footprint_area:.2f} sq degrees")
+    print(f"  Country boundary area: {boundary_area:.2f} sq units")
+    print(f"  STL footprint area: {footprint_area:.2f} sq units")
     print(f"  Coverage: {coverage_pct:.1f}%")
     print(
-        f"  Missing area: {missing_area:.4f} sq degrees ({(missing_area / boundary_area) * 100:.1f}%)"
+        f"  Missing area: {missing_area:.4f} sq units ({(missing_area / boundary_area) * 100:.1f}%)"
     )
     print(
-        f"  Extra area: {extra_area:.4f} sq degrees ({(extra_area / boundary_area) * 100:.1f}%)"
+        f"  Extra area: {extra_area:.4f} sq units ({(extra_area / boundary_area) * 100:.1f}%)"
     )
 
     # Create visualization
@@ -216,8 +252,8 @@ def visualize_coverage_qc(
 
     # Set up plot
     ax.set_aspect("equal")
-    ax.set_xlabel("Longitude", fontsize=12)
-    ax.set_ylabel("Latitude", fontsize=12)
+    ax.set_xlabel("Easting (m)", fontsize=12)
+    ax.set_ylabel("Northing (m)", fontsize=12)
     ax.set_title(
         f"{country_name} - STL Coverage QC\nCoverage: {coverage_pct:.1f}% | Missing: {(missing_area / boundary_area) * 100:.1f}%",
         fontsize=14,
@@ -262,11 +298,12 @@ def main():
     stl_dir = "STLs_Azerbaijan_Fix_20260111_102942_e0537a7"
     stl_path = f"{stl_dir}/{country_name.replace(' ', '_')}_solid.stl"
     output_path = f"{stl_dir}/{country_name.replace(' ', '_')}_coverage_qc.png"
-    xy_mm_per_pixel = 0.50  # 2km DEM
+    xy_mm_per_pixel = 0.50  # 2km DEM base resolution
+    xy_step = 3  # Decimation factor used in STL generation
+    VECTOR_SIMPLIFY_DEGREES = 0.02  # Same as used in STL generation
 
-    # Load DEM for transform
+    # Load DEM CRS
     with rasterio.open(dem_path) as dem_src:
-        dem_transform = dem_src.transform
         dem_crs = dem_src.crs
 
     # Load country boundary
@@ -279,6 +316,39 @@ def main():
 
     country_geom_wgs84 = country_row.iloc[0].geometry
 
+    # Apply same geometry transformations as in make_caucasus_central_asia.py
+    if country_geom_wgs84.geom_type == "MultiPolygon":
+        if country_name == "Azerbaijan":
+            # Keep mainland (largest), Nakhchivan exclave (2nd largest),
+            # AND all eastern polygons (Absheron Peninsula near Baku at 50°E+)
+            from shapely.geometry import MultiPolygon
+
+            polys = sorted(country_geom_wgs84.geoms, key=lambda p: p.area, reverse=True)
+
+            # Start with 2 largest (mainland + Nakhchivan)
+            keep_polys = [polys[0], polys[1]]
+
+            # Add all polygons with centroids east of 50°E (Absheron Peninsula)
+            for poly in polys[2:]:
+                if poly.centroid.x >= 50.0:
+                    keep_polys.append(poly)
+
+            country_geom_wgs84 = MultiPolygon(keep_polys)
+            print(
+                f"  Applied Azerbaijan polygon filtering: keeping {len(keep_polys)} polygons"
+            )
+        else:
+            # For other countries, take only the largest (mainland)
+            country_geom_wgs84 = max(country_geom_wgs84.geoms, key=lambda p: p.area)
+            print(f"  MultiPolygon detected, using mainland only")
+
+    # Apply simplification (same as in STL generation)
+    if VECTOR_SIMPLIFY_DEGREES > 0:
+        country_geom_wgs84 = country_geom_wgs84.simplify(
+            VECTOR_SIMPLIFY_DEGREES, preserve_topology=True
+        )
+        print(f"  Applied simplification: {VECTOR_SIMPLIFY_DEGREES} degrees")
+
     # Project to DEM CRS
     country_geom_dem_crs = (
         gpd.GeoSeries([country_geom_wgs84], crs="EPSG:4326").to_crs(dem_crs).iloc[0]
@@ -289,8 +359,10 @@ def main():
         country_name,
         country_geom_dem_crs,
         stl_path,
-        dem_transform,
+        dem_path,
+        dem_crs,
         xy_mm_per_pixel,
+        xy_step,
         output_path,
     )
 
