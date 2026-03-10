@@ -530,7 +530,7 @@ def get_scs_ocean_polygon(gdf, borneo_geom):
             scs_ocean.geoms if scs_ocean.geom_type == "MultiPolygon" else [scs_ocean]
         )
     )
-    scs_ocean = fill_small_holes(scs_ocean, min_hole_area_deg2=0.02)
+    scs_ocean = fill_small_holes(scs_ocean, min_hole_area_deg2=0.1)
     holes_after = sum(
         len(p.interiors)
         for p in (
