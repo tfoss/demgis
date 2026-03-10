@@ -40,22 +40,26 @@ STLs_Ocean_v3_nk_recut_v4/Japan_ocean_korea_cutout.stl  # overwritten 3 times
 
 Use `datetime.now().strftime('%Y%m%d_%H%M%S')` in scripts to auto-generate unique directory names.
 
-## CRITICAL Workflow: Always Update GOLD_STLs
+## CRITICAL Workflow: Print-Test Before GOLD_STLs
 
-**IMPORTANT**: Whenever you generate new or fixed STL files, you MUST immediately copy them to the GOLD_STLs directory:
+**IMPORTANT**: NEVER copy new or regenerated STLs to GOLD_STLs without a physical print test first. The workflow is:
+
+1. **Generate** STL to a timestamped output directory
+2. **QC** — run projection/alignment checks (stl_fit_tool.py, QC scripts)
+3. **Print-test** — physically print and verify fit with adjacent pieces
+4. **Only then** copy to GOLD_STLs
+
+Computational QC (overlap metrics, border gap histograms) is necessary but NOT sufficient. Physical fit on the printer is the final authority.
 
 ```bash
-# For individual country fixes
-cp <source_dir>/<region>/<country>_*.stl GOLD_STLs/<region>/
-
-# Example:
-cp STLs_Iceland_20260122_083507_e20a0b8/Iceland_starup.stl GOLD_STLs/Europe/
+# After print-test confirms fit:
+cp <source_dir>/<country>_*.stl GOLD_STLs/<region>/
 ```
 
 **Why this matters:**
 - GOLD_STLs contains the canonical "best version" of each country STL
 - Users rely on GOLD_STLs for 3D printing
-- Forgetting to update GOLD_STLs means fixes don't reach users
+- Computational checks can miss real-world issues (warping, tolerance, projection artifacts)
 
 **After copying, verify:**
 ```bash
