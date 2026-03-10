@@ -1,0 +1,181 @@
+{
+  "dem": "eurasia_2km_smooth_aea.tif",
+  "dem_crs": "PROJCS[\"unknown\",GEOGCS[\"unknown\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Albers_Conic_Equal_Area\"],PARAMETER[\"latitude_of_center\",42.5],PARAMETER[\"longitude_of_center\",70],PARAMETER[\"standard_parallel_1\",25],PARAMETER[\"standard_parallel_2\",60],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+  "pixel_w": 2000.0,
+  "parameters": {
+    "XY_MM_PER_PIXEL": 0.5,
+    "GLOBAL_XY_SCALE": 0.33,
+    "MIRROR_X": true,
+    "VECTOR_SIMPLIFY_DEGREES": 0.02
+  },
+  "pieces": {
+    "Malaysia_peninsula": {
+      "stl": "GOLD_STLs/SoutheastAsia/Malaysia_peninsula.stl",
+      "origin_crs": {
+        "x": 3577067.5675401,
+        "y": -3262950.3129712287
+      },
+      "is_mainland": true,
+      "ncols": 361,
+      "east_edge_crs_x": 4299067.5675401
+    },
+    "Thailand": {
+      "stl": "GOLD_STLs/SoutheastAsia/Thailand_solid.stl",
+      "origin_crs": {
+        "x": 2929067.5675401,
+        "y": -1954950.3129712287
+      },
+      "is_mainland": true,
+      "ncols": 500,
+      "east_edge_crs_x": 3929067.5675401
+    },
+    "Cambodia": {
+      "stl": "GOLD_STLs/SoutheastAsia/Cambodia_solid.stl",
+      "origin_crs": {
+        "x": 3629067.5675401,
+        "y": -2222950.3129712287
+      },
+      "is_mainland": true,
+      "ncols": 302,
+      "east_edge_crs_x": 4233067.5675401
+    },
+    "Vietnam": {
+      "stl": "GOLD_STLs/SoutheastAsia/Vietnam_solid.stl",
+      "origin_crs": {
+        "x": 3273067.5675401,
+        "y": -1458950.3129712287
+      },
+      "is_mainland": true,
+      "ncols": 585,
+      "east_edge_crs_x": 4443067.5675401
+    },
+    "Laos": {
+      "stl": "GOLD_STLs/SoutheastAsia/Laos_solid.stl",
+      "origin_crs": {
+        "x": 3147067.5675401,
+        "y": -1682950.3129712287
+      },
+      "is_mainland": true,
+      "ncols": 493,
+      "east_edge_crs_x": 4133067.5675401
+    },
+    "Philippines_ocean_tile": {
+      "stl": "GOLD_STLs/SoutheastAsia/Philippines_ocean_tile.stl",
+      "origin_crs": {
+        "x": 4057047.088778328,
+        "y": -1024950.3129712287
+      },
+      "is_mainland": false
+    }
+  },
+  "border_fit": [
+    {
+      "label1": "Malaysia_peninsula",
+      "label2": "Thailand",
+      "shared_border": true,
+      "n_border_points": 337,
+      "min_gap_deg": 0.0009526492866444156,
+      "max_gap_deg": 0.999148594423939,
+      "median_gap_deg": 0.03338221879168251,
+      "mean_gap_deg": 0.2812925062835619,
+      "median_gap_km": 3.7054262858767584,
+      "overlap_area_deg2": 0.01947511916374676
+    },
+    {
+      "label1": "Thailand",
+      "label2": "Cambodia",
+      "shared_border": true,
+      "n_border_points": 469,
+      "min_gap_deg": 0.0012269216540673191,
+      "max_gap_deg": 0.993320766334205,
+      "median_gap_deg": 0.027931188767250724,
+      "mean_gap_deg": 0.21353367255560068,
+      "median_gap_km": 3.1003619531648305,
+      "overlap_area_deg2": 0.003126723362485144
+    },
+    {
+      "label1": "Thailand",
+      "label2": "Vietnam",
+      "shared_border": true,
+      "n_border_points": 99,
+      "min_gap_deg": 0.8028726685422596,
+      "max_gap_deg": 0.9996373530269286,
+      "median_gap_deg": 0.9332658223314345,
+      "mean_gap_deg": 0.9252502585853187,
+      "median_gap_km": 103.59250627878923,
+      "overlap_area_deg2": 0.0
+    },
+    {
+      "label1": "Thailand",
+      "label2": "Laos",
+      "shared_border": true,
+      "n_border_points": 845,
+      "min_gap_deg": 0.0006938603227882942,
+      "max_gap_deg": 0.9962554951328824,
+      "median_gap_deg": 0.016962587553509205,
+      "mean_gap_deg": 0.08894699391970134,
+      "median_gap_km": 1.8828472184395217,
+      "overlap_area_deg2": 0.015242287854657106
+    },
+    {
+      "label1": "Cambodia",
+      "label2": "Vietnam",
+      "shared_border": true,
+      "n_border_points": 547,
+      "min_gap_deg": 0.0002220604692963463,
+      "max_gap_deg": 0.9983014393934778,
+      "median_gap_deg": 0.018303159279775934,
+      "mean_gap_deg": 0.17820949970062255,
+      "median_gap_km": 2.0316506800551286,
+      "overlap_area_deg2": 0.0025177352517567458
+    },
+    {
+      "label1": "Cambodia",
+      "label2": "Laos",
+      "shared_border": true,
+      "n_border_points": 291,
+      "min_gap_deg": 0.0030327369140190656,
+      "max_gap_deg": 0.9988715238855468,
+      "median_gap_deg": 0.042804890284557306,
+      "mean_gap_deg": 0.21037884738956306,
+      "median_gap_km": 4.751342821585861,
+      "overlap_area_deg2": 0.0011676063494300945
+    },
+    {
+      "label1": "Vietnam",
+      "label2": "Laos",
+      "shared_border": true,
+      "n_border_points": 1325,
+      "min_gap_deg": 0.0006340027901159496,
+      "max_gap_deg": 0.999995638529251,
+      "median_gap_deg": 0.040329485396744386,
+      "mean_gap_deg": 0.2712193200426871,
+      "median_gap_km": 4.476572879038627,
+      "overlap_area_deg2": 0.11314782902726236
+    },
+    {
+      "label1": "Vietnam",
+      "label2": "Philippines_ocean_tile",
+      "shared_border": true,
+      "n_border_points": 833,
+      "min_gap_deg": 0.000738067990551212,
+      "max_gap_deg": 0.9997302052168527,
+      "median_gap_deg": 0.03890773019864292,
+      "mean_gap_deg": 0.21012460844728414,
+      "median_gap_km": 4.318758052049365,
+      "overlap_area_deg2": 0.009167962668061679
+    },
+    {
+      "label1": "Laos",
+      "label2": "Philippines_ocean_tile",
+      "shared_border": true,
+      "n_border_points": 107,
+      "min_gap_deg": 0.6203771212765663,
+      "max_gap_deg": 0.9981660773748041,
+      "median_gap_deg": 0.9134494762158717,
+      "mean_gap_deg": 0.8480070767714747,
+      "median_gap_km": 101.39289185996176,
+      "overlap_area_deg2": 0.0
+    }
+  ]
+}

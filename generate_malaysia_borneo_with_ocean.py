@@ -3,7 +3,7 @@
 Generate Malaysia Borneo STL with SCS ocean attached.
 
 Similar to how Philippines has its ocean tile attached, this creates:
-1. Malaysia Borneo land mesh (from eurasia_2km_smooth_aea.tif)
+1. Malaysia Borneo land mesh (from seasia_oceania_2km_smooth_aea.tif for scale match with Indonesia)
 2. SCS ocean tile attached to it
 3. Cutouts for neighboring GOLD STLs (Thailand, Vietnam, Cambodia, Malaysia peninsula, Philippines ocean)
 
@@ -696,7 +696,7 @@ def build_ocean_mesh(ocean_wgs84, dem_crs, pixel_w, origin_crs, gdf):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dem", default="eurasia_2km_smooth_aea.tif")
+    parser.add_argument("--dem", default="seasia_oceania_2km_smooth_aea.tif")
     parser.add_argument("--ne", default="data/ne/ne_10m_admin_0_countries.shp")
     parser.add_argument("--output-dir")
     args = parser.parse_args()

@@ -1,7 +1,7 @@
 # Project Status - DEM to STL Generation Pipeline
 
-**Last Updated**: January 22, 2026
-**Git Commit**: 030f87b - Add Denmark island bridging solution
+**Last Updated**: March 10, 2026
+**Git Commit**: 9ea7c86 - Malaysia Borneo v11 eurasia-only CRS
 
 ## Overview
 
@@ -96,10 +96,15 @@ This project generates 3D-printable STL files of countries from Digital Elevatio
 - `EURASIA_SPECIAL_CASES.md` - Individual country fixes and special cases
 - `EURASIA_STL_CHECKLIST.md` - Country checklist and status
 - `DENMARK_ISLAND_BRIDGING.md` - Denmark bridge solution documentation
+- `DUAL_CRS_REPROJECTION.md` - Technique for fitting pieces across projection boundaries
 - `PROJECT_STATUS.md` - This file
 
 ### Key Scripts
 - `make_eurasia_all.py` - Main batch generation script for Eurasia
+- `generate_malaysia_borneo_with_ocean_v11.py` - Malaysia Borneo + ocean (eurasia-only CRS)
+- `generate_indonesia_shared_origin.py` - Indonesia with shared seasia origin
+- `align_seasia_eurasia.py` - Compute SE Asia piece alignment origins
+- `qc_combined_fit.py` - Multi-piece QC for SE Asia fits
 - `generate_denmark_connected.py` - Denmark with island bridges
 - `generate_iceland.py` - Iceland with separate DEM
 - `generate_qc_png.py` - Generate QC coverage visualization
@@ -126,6 +131,27 @@ STAR_RADIUS_MM = 2.0            # Capital star marker size
 **Coastal capitals list** (25 countries): Portugal, UK, Ireland, Netherlands, Iceland, Norway, Sweden, Finland, Denmark, Estonia, Latvia, Greece, Lebanon, Oman, UAE, Qatar, Bahrain, Kuwait, Azerbaijan, Sri Lanka, Maldives, Singapore, Brunei, Philippines, Indonesia, Timor-Leste, Japan
 
 ## Recent Work Summary
+
+### Malaysia Borneo Eurasia-Only CRS (Mar 10, 2026)
+**Goal**: Generate Malaysia Borneo + SCS ocean tile that fits Philippines ocean tile, mainland SE Asia pieces (Thailand, Vietnam, Cambodia, Malaysia Peninsula), AND Indonesia.
+
+**Challenge**: Borneo land is only covered by seasia DEM, but ocean neighbors use eurasia CRS. The two projections differ by ~120mm for the same geographic point.
+
+**Failed approaches**:
+1. **Seasia-only**: Perfect Indonesia fit but 42mm Philippines shape mismatch
+2. **Dual-CRS blending** (BLEND_END_KM=500): Smooth mesh but wrong projection at Phil border
+3. **Dual-CRS blending** (BLEND_END_KM=50): Correct borders but creates triangle/wedge-shaped STL
+
+**Solution** (dual-CRS reprojection):
+- Build land mesh from seasia DEM, reproject all vertices to eurasia CRS via WGS84 round-trip
+- Build ocean mesh directly in eurasia CRS
+- Combined output in eurasia CRS, using Philippines tile origin
+- **Documentation**: `DUAL_CRS_REPROJECTION.md`
+
+**Result**: Correct STL shape, Phil abutment 0.6km, Kalimantan border 2.45km (~0.2mm in print), no Indonesia overlap.
+- Script: `generate_malaysia_borneo_with_ocean_v11.py`
+- QC: `qc_combined_fit.py`
+- Output: `STLs_Malaysia_Borneo_20260310_172008_9ea7c86/` — **awaiting print test**
 
 ### Denmark Island Bridging (Jan 22, 2026)
 **Goal**: Connect 3 main Danish islands (Jutland, Zealand, Funen) with physical low bridges
@@ -232,26 +258,45 @@ Ocean tiles fill the sea between island countries and the mainland, allowing pri
 
 ## Next Steps / Roadmap
 
-### Immediate: Malaysia (Existing Eurasia DEM)
-- Malaysia (peninsula 100-104°E + Borneo 109-119°E) is within Eurasia DEM bounds
-- Previous generation failed — needs debugging (likely island filtering or equatorial projection)
-- Peninsula must fit with Thailand GOLD STL at shared border
-- Then: Malaysia ocean tile connecting peninsula to Borneo + mainland cutouts
+### Completed: SE Asia / Oceania DEM
+A second DEM (`seasia_oceania_2km_smooth_aea.tif`) was created for SE Asia and Oceania:
+- **Projection**: `+proj=aea +lat_0=-20 +lon_0=135 +lat_1=-10 +lat_2=-35`
+- **Coverage**: 94-142°E, 14°S-8°N
 
-### Future: Oceania DEM (New DEM Required)
-Countries that need a NEW southern hemisphere DEM:
-- **Indonesia** (95-141°E, 11°S-6°N) — 90% south of equator
-- **Papua New Guinea** (141-156°E, 12°S-1°S) — entirely southern hemisphere
-- **Australia** (113-154°E, 44°S-10°S) — enormous, may need special handling
-- **New Zealand** (166-178°E, 47°S-34°S) — crosses dateline
+#### Malaysia Split Architecture
+- **Malaysia Peninsula**: Uses Eurasia DEM (fits with Thailand, Vietnam, Cambodia)
+  - `GOLD_STLs/SoutheastAsia/Malaysia_peninsula.stl`
+- **Malaysia Borneo**: Land from seasia DEM, **reprojected to eurasia CRS** (fits Phil + mainland)
+  - v11: `STLs_Malaysia_Borneo_20260310_172008_9ea7c86/` — print testing
+  - Technique documented in `DUAL_CRS_REPROJECTION.md`
 
-Proposed Oceania DEM projection:
+#### Projection Distortion Discovery (Critical!)
+The Albers projection causes **significant scale variation by latitude**:
+- At -10°S: 8.82 mm/° lon, 8.87 mm/° lat
+- At +5°N: 9.66 mm/° lon, 8.18 mm/° lat
+- At +15°N: 10.17 mm/° lon, 7.52 mm/° lat
+
+**Impact**: STLs generated independently have different scales and CANNOT fit together.
+
+**Solution**: Use **shared coordinate origin** for pieces that must fit together.
+
+#### Indonesia (Testing)
+- `STLs_Indonesia_shared_origin/Indonesia_with_ocean.stl` — Uses Malaysia Borneo's origin
+- Verified with `stl_fit_tool.py`: Overlap = 0.32 mm² (essentially zero)
+- **Awaiting print confirmation** before copying to GOLD_STLs
+
+#### STL Fitting Tool
+Created `stl_fit_tool.py` for computational verification of STL alignment:
+```bash
+conda run -n demgis python3 stl_fit_tool.py STL1.stl STL2.stl -o fit_check.png
 ```
-+proj=aea +lat_1=-20 +lat_2=-40 +lat_0=-30 +lon_0=135 +datum=WGS84
-```
-Coverage: 95-180°E, 55°S-8°N (~3,800 tiles, ~110GB raw)
 
-Scripts needed: `get_oceania_dem.py`, `build_oceania_dem_aea_2km.sh`, `make_oceania_all.py`
+### Pending: Oceania Countries
+- Papua New Guinea
+- Australia  
+- New Zealand
+
+These will need the shared origin approach with Indonesia/Malaysia Borneo.
 
 ### Maintenance
 - Keep DEM tiles backed up (240GB+ raw data)
