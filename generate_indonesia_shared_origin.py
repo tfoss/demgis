@@ -28,9 +28,15 @@ import trimesh
 from rasterio.mask import mask as rasterio_mask
 from scipy.ndimage import gaussian_filter
 from shapely.affinity import affine_transform, translate
-from shapely.geometry import MultiPolygon, Polygon, box
+from shapely.geometry import MultiPolygon, Point, Polygon, box
 from shapely.ops import unary_union
 from shapely.validation import make_valid
+
+from make_all_sa_with_vector_clip import (
+    add_capital_star_extrusion,
+    make_star_polygon_mm,
+    STAR_RADIUS_MM,
+)
 
 # Parameters matching Malaysia Borneo
 XY_MM_PER_PIXEL = 0.50
@@ -41,6 +47,10 @@ XY_STEP = 3
 BASE_THICKNESS_MM = 2.0
 Z_SCALE_MM_PER_M = 0.0020
 OCEAN_FLOOR_Z = 1.0
+
+# Capital star parameters
+JAKARTA_LON = 106.8456
+JAKARTA_LAT = -6.2088
 
 
 MASK_EXPAND_PIXELS = 5  # Expand DEM mask to ensure material beyond polygon boundary
@@ -172,7 +182,10 @@ def clip_land_to_vector(solid, geom_mm):
 
 def main():
     # Load Malaysia Borneo's origin - this is the key to proper alignment
-    with open("GOLD_STLs/SoutheastAsia/Malaysia_borneo_with_ocean_metadata.json") as f:
+    # Use the bece1db MB version (origin matches the _144353 Indonesia build)
+    _mb_meta_path = "STLs_Malaysia_Borneo_20260310_194348_bece1db/Malaysia_borneo_with_ocean_metadata.json"
+    print(f"Using MB metadata from: {_mb_meta_path}")
+    with open(_mb_meta_path) as f:
         mal_meta = json.load(f)
 
     SHARED_ORIGIN_CRS = (
@@ -183,10 +196,18 @@ def main():
         f"Using Malaysia Borneo origin: ({SHARED_ORIGIN_CRS[0]:.0f}, {SHARED_ORIGIN_CRS[1]:.0f})"
     )
 
-    # Load DEM and shapefile
+    # Load DEM for elevation data (seasia projection covers Indonesia)
     dem = rasterio.open("seasia_oceania_2km_smooth_aea.tif")
     pixel_w = dem.transform.a
-    dem_crs = dem.crs
+    dem_native_crs = dem.crs
+
+    # Use eurasia CRS for coordinate system, matching Malaysia Borneo.
+    # The shared origin is in eurasia CRS. We read elevation from seasia DEM
+    # but transform coordinates through eurasia CRS.
+    eurasia_dem = rasterio.open("eurasia_2km_smooth_aea.tif")
+    dem_crs = eurasia_dem.crs  # eurasia AEA for all coordinate transforms
+    eurasia_dem.close()
+    print(f"Coordinate CRS: eurasia AEA (matching MB)")
 
     gdf = gpd.read_file("data/ne/ne_10m_admin_0_countries.shp")
 
@@ -223,15 +244,37 @@ def main():
     # ============ BUILD OCEAN POLYGON ============
     print("\nBuilding ocean polygon...")
 
-    # Indonesia ocean boundary - hugs archipelago with buffer
+    # Buffer Indonesia land to create ocean zone
     OCEAN_BUFFER_DEG = 0.9
     indonesia_buffered = indo_geom.buffer(OCEAN_BUFFER_DEG)
     indonesia_buffered = indonesia_buffered.simplify(0.1, preserve_topology=True)
 
-    # Big box to limit extent
-    big_box = box(94.0, -14.0, 142.0, 8.0)
+    # Fill concavities between island buffer zones by identifying gaps
+    # (areas in convex hull but not in buffered shape) and filling them
+    hull_diff = indonesia_buffered.convex_hull.difference(indonesia_buffered)
+    if hull_diff.geom_type == "MultiPolygon":
+        # Fill gaps larger than 5 deg² (inter-island seas that should be ocean)
+        fill_gaps = [g for g in hull_diff.geoms if g.area > 5.0]
+        if fill_gaps:
+            indonesia_buffered = unary_union([indonesia_buffered] + fill_gaps)
+            print(f"  Filled {len(fill_gaps)} inter-island gaps")
+    print(f"  Buffered ocean (gaps filled): {indonesia_buffered.area:.1f} deg²")
 
-    # Subtract neighboring countries
+    # Outer boundary limit
+    big_box = box(94.0, -14.0, 142.0, 8.0)
+    indonesia_ocean_boundary = Polygon(
+        [
+            (92.0, 8.0),
+            (141.0, 8.0),
+            (141.0, -13.0),
+            (120.0, -13.0),
+            (105.0, -12.0),
+            (92.0, -12.0),
+            (92.0, 8.0),
+        ]
+    )
+
+    # Subtract neighboring countries' land
     land_polys = []
     countries = [
         "Malaysia",
@@ -262,28 +305,7 @@ def main():
     if not indonesia_ocean.is_valid:
         indonesia_ocean = make_valid(indonesia_ocean)
 
-    # Boundary constraints
-    indonesia_ocean_boundary = Polygon(
-        [
-            (92.0, 8.0),
-            (98.0, 8.0),
-            (103.0, 1.5),
-            (105.0, 0.5),
-            (109.5, 0.5),
-            (117.0, 0.5),
-            (117.5, 8.0),
-            (125.0, 8.0),
-            (130.0, 5.0),
-            (135.0, 2.0),
-            (141.0, -2.5),
-            (141.0, -13.0),
-            (120.0, -13.0),
-            (105.0, -12.0),
-            (92.0, -12.0),
-            (92.0, 8.0),
-        ]
-    )
-
+    # Clip to boundary
     indonesia_ocean = indonesia_ocean.intersection(indonesia_ocean_boundary)
     if not indonesia_ocean.is_valid:
         indonesia_ocean = make_valid(indonesia_ocean)
@@ -311,9 +333,11 @@ def main():
                     indonesia_ocean = indonesia_ocean.difference(mal_borneo_inset)
                     print("  Cut out Malaysia Borneo")
 
-    # Get Malaysia Borneo STL outline and cut it from ocean
+    # Cut Malaysia Borneo STL footprint from ocean (avoid overlap with MB tile)
     print("  Cutting Malaysia Borneo STL footprint from ocean...")
-    mal_stl = trimesh.load("GOLD_STLs/SoutheastAsia/Malaysia_borneo_with_ocean.stl")
+    _mb_stl_path = "STLs_Malaysia_Borneo_20260310_194348_bece1db/Malaysia_borneo_with_ocean.stl"
+    print(f"  Using MB STL: {_mb_stl_path}")
+    mal_stl = trimesh.load(_mb_stl_path)
     mal_sec = mal_stl.section(plane_origin=[0, 0, 0.5], plane_normal=[0, 0, 1])
     if mal_sec:
         path2d = mal_sec.to_2D()
@@ -327,21 +351,28 @@ def main():
             [translate(p, xoff=tf[0, 3], yoff=tf[1, 3]) for p in polys]
         )
 
-        # Convert Malaysia STL outline back to WGS84 to subtract from ocean polygon
+        # Convert MB STL mm coords back to WGS84.
+        # MB STL uses eurasia CRS (origin_crs_name: "eurasia_aea"), NOT seasia.
         def stl_mm_to_wgs84(outline_mm):
-            """Convert STL mm coordinates back to WGS84."""
+            """Convert STL mm coordinates back to WGS84 via eurasia CRS."""
+            import rasterio as _rio
+            eurasia_dem = _rio.open("eurasia_2km_smooth_aea.tif")
+            mb_crs = eurasia_dem.crs
+            mb_pixel_w = eurasia_dem.transform.a
+            eurasia_dem.close()
+
             scale = XY_MM_PER_PIXEL * GLOBAL_XY_SCALE
 
             def mm_to_crs(x, y):
                 if MIRROR_X:
-                    crs_x = -x / scale * pixel_w + SHARED_ORIGIN_CRS[0]
+                    crs_x = -x / scale * mb_pixel_w + SHARED_ORIGIN_CRS[0]
                 else:
-                    crs_x = x / scale * pixel_w + SHARED_ORIGIN_CRS[0]
-                crs_y = -y / scale * pixel_w + SHARED_ORIGIN_CRS[1]
+                    crs_x = x / scale * mb_pixel_w + SHARED_ORIGIN_CRS[0]
+                crs_y = -y / scale * mb_pixel_w + SHARED_ORIGIN_CRS[1]
                 return crs_x, crs_y
 
             transformer = pyproj.Transformer.from_crs(
-                dem_crs, "EPSG:4326", always_xy=True
+                mb_crs, "EPSG:4326", always_xy=True
             )
 
             if outline_mm.geom_type == "MultiPolygon":
@@ -349,19 +380,54 @@ def main():
                 for poly in outline_mm.geoms:
                     crs_coords = [mm_to_crs(x, y) for x, y in poly.exterior.coords]
                     wgs_coords = [transformer.transform(x, y) for x, y in crs_coords]
-                    wgs_polys.append(Polygon(wgs_coords))
-                return unary_union(wgs_polys)
+                    p = Polygon(wgs_coords)
+                    if not p.is_valid:
+                        p = make_valid(p)
+                    if not p.is_empty:
+                        wgs_polys.append(p)
+                return make_valid(unary_union(wgs_polys))
             else:
                 crs_coords = [mm_to_crs(x, y) for x, y in outline_mm.exterior.coords]
                 wgs_coords = [transformer.transform(x, y) for x, y in crs_coords]
-                return Polygon(wgs_coords)
+                p = Polygon(wgs_coords)
+                return make_valid(p) if not p.is_valid else p
 
-        mal_wgs84 = stl_mm_to_wgs84(mal_outline_mm)
-        mal_wgs84_buffered = mal_wgs84.buffer(0.02)  # Small buffer for clearance
-        indonesia_ocean = indonesia_ocean.difference(mal_wgs84_buffered)
-        if not indonesia_ocean.is_valid:
-            indonesia_ocean = make_valid(indonesia_ocean)
-        print(f"  Ocean after Malaysia STL cutout: {indonesia_ocean.area:.1f} deg²")
+        try:
+            mal_wgs84 = stl_mm_to_wgs84(mal_outline_mm)
+            mal_wgs84_buffered = mal_wgs84.buffer(0.02)  # Small buffer for clearance
+            indonesia_ocean = indonesia_ocean.difference(mal_wgs84_buffered)
+            if not indonesia_ocean.is_valid:
+                indonesia_ocean = make_valid(indonesia_ocean)
+            print(f"  Ocean after Malaysia STL cutout: {indonesia_ocean.area:.1f} deg²")
+        except Exception as e:
+            print(f"  WARNING: MB STL footprint cutout failed ({e}), skipping")
+
+    # Cut Philippines ocean tile footprint (same shared origin, same CRS)
+    print("  Cutting Philippines STL footprint from ocean...")
+    _ph_stl_path = "GOLD_STLs/SoutheastAsia/Philippines_ocean_tile.stl"
+    print(f"  Using Philippines STL: {_ph_stl_path}")
+    ph_stl = trimesh.load(_ph_stl_path)
+    ph_sec = ph_stl.section(plane_origin=[0, 0, 0.5], plane_normal=[0, 0, 1])
+    if ph_sec:
+        ph_path2d = ph_sec.to_2D()
+        ph_polys = (
+            ph_path2d[0].polygons_full
+            if isinstance(ph_path2d, tuple)
+            else ph_path2d.polygons_full
+        )
+        ph_tf = ph_path2d[1] if isinstance(ph_path2d, tuple) else np.eye(4)
+        ph_outline_mm = unary_union(
+            [translate(p, xoff=ph_tf[0, 3], yoff=ph_tf[1, 3]) for p in ph_polys]
+        )
+        try:
+            ph_wgs84 = stl_mm_to_wgs84(ph_outline_mm)
+            ph_wgs84_buffered = ph_wgs84.buffer(0.02)
+            indonesia_ocean = indonesia_ocean.difference(ph_wgs84_buffered)
+            if not indonesia_ocean.is_valid:
+                indonesia_ocean = make_valid(indonesia_ocean)
+            print(f"  Ocean after Philippines STL cutout: {indonesia_ocean.area:.1f} deg²")
+        except Exception as e:
+            print(f"  WARNING: Philippines STL footprint cutout failed ({e}), skipping")
 
     # Fill internal holes (ocean between islands should be filled)
     print("  Filling internal holes...")
@@ -372,6 +438,14 @@ def main():
         indonesia_ocean = unary_union(filled_parts)
     elif indonesia_ocean.geom_type == "Polygon":
         indonesia_ocean = Polygon(indonesia_ocean.exterior)
+
+    # Remove tiny disconnected ocean fragments (slivers from boundary clipping)
+    if indonesia_ocean.geom_type == "MultiPolygon":
+        largest_area = max(p.area for p in indonesia_ocean.geoms)
+        kept = [p for p in indonesia_ocean.geoms if p.area > largest_area * 0.001]
+        if kept:
+            indonesia_ocean = unary_union(kept)
+            print(f"  Removed {len(list(indonesia_ocean.geoms)) if indonesia_ocean.geom_type == 'MultiPolygon' else 1} tiny fragments")
 
     print(f"  Final ocean area: {indonesia_ocean.area:.1f} deg²")
 
@@ -411,34 +485,18 @@ def main():
     # ============ BUILD LAND MESH ============
     print("\nBuilding land mesh...")
 
-    # Transform to DEM CRS - buffer the geometry to get expanded DEM coverage
-    indo_crs = gpd.GeoSeries([indo_geom], crs="EPSG:4326").to_crs(dem_crs).iloc[0]
+    # Transform to DEM's native CRS (seasia) for clipping elevation data
+    indo_crs_native = gpd.GeoSeries([indo_geom], crs="EPSG:4326").to_crs(dem_native_crs).iloc[0]
 
     # Buffer the CRS geometry to expand the DEM clip region
-    # This ensures mesh material extends beyond the polygon for clean boolean clipping
     expand_m = MASK_EXPAND_PIXELS * abs(pixel_w)  # expand by N pixels
-    indo_crs_expanded = indo_crs.buffer(expand_m)
+    indo_crs_expanded = indo_crs_native.buffer(expand_m)
 
-    # Clip DEM to expanded Indonesia region
+    # Clip DEM to expanded Indonesia region (in seasia CRS)
     out_image, out_transform = rasterio_mask(
         dem, [indo_crs_expanded], crop=True, filled=True, nodata=np.nan
     )
     dem_data = out_image[0]
-
-    # Use out_transform for accurate offset (snapped to pixel grid)
-    clip_origin_x = out_transform.c  # left edge x
-    clip_origin_y = out_transform.f  # top edge y
-
-    # Compute offset from SHARED origin to clip origin
-    offset_x_crs = clip_origin_x - SHARED_ORIGIN_CRS[0]
-    offset_y_crs = clip_origin_y - SHARED_ORIGIN_CRS[1]
-
-    # Convert to mm
-    offset_x_mm = offset_x_crs / pixel_w * XY_MM_PER_PIXEL * GLOBAL_XY_SCALE
-    offset_y_mm = -offset_y_crs / pixel_w * XY_MM_PER_PIXEL * GLOBAL_XY_SCALE
-
-    if MIRROR_X:
-        offset_x_mm = -offset_x_mm
 
     # Build land mesh with expanded mask
     land_mask = np.isfinite(dem_data)
@@ -462,21 +520,27 @@ def main():
     z = dem_smoothed[::step, ::step]
     land_dec = land_mask[::step, ::step]
     nrows, ncols = z.shape
-    step_mm = step * XY_MM_PER_PIXEL
 
     # Valid pixels are those in the (expanded) land mask with finite elevation
     # Expanded areas have 0 elevation which is finite, so this works
     valid = land_dec & np.isfinite(z)
     rows, cols = np.where(valid)
 
-    x = cols * step_mm * GLOBAL_XY_SCALE
-    y = rows * step_mm * GLOBAL_XY_SCALE
+    # Convert pixel positions from seasia CRS → eurasia CRS → STL mm
+    seasia_x = out_transform.c + cols * step * out_transform.a
+    seasia_y = out_transform.f + rows * step * out_transform.e
+
+    # Transform to eurasia CRS (coordinate system matching MB)
+    tf_native_to_coord = pyproj.Transformer.from_crs(dem_native_crs, dem_crs, always_xy=True)
+    eur_x, eur_y = tf_native_to_coord.transform(seasia_x, seasia_y)
+
+    # Convert to STL mm relative to shared origin
+    scale = XY_MM_PER_PIXEL / pixel_w * GLOBAL_XY_SCALE
+    x = (eur_x - SHARED_ORIGIN_CRS[0]) * scale
+    y = -(eur_y - SHARED_ORIGIN_CRS[1]) * scale
 
     if MIRROR_X:
         x = -x
-
-    x = x + offset_x_mm
-    y = y + offset_y_mm
 
     z_vals = BASE_THICKNESS_MM + np.maximum(z[valid] * Z_SCALE_MM_PER_M, 0)
 
@@ -536,12 +600,34 @@ def main():
     land_mesh = clip_land_to_vector(land_mesh, indo_mm)
 
     # ============ COMBINE ============
-    print("\nCombining land + ocean...")
-    combined = trimesh.util.concatenate([land_mesh, ocean_mesh])
-    combined.fix_normals()
+    # Boolean union to merge overlapping ocean+land into a single watertight shell.
+    # Simple concatenation creates overlapping shells that confuse slicer even-odd fill.
+    print("\nCombining land + ocean via boolean union...")
+    land_mesh.merge_vertices()
+    land_mesh.fix_normals()
+    ocean_mesh.merge_vertices()
+    ocean_mesh.fix_normals()
+    print(f"  Land: {len(land_mesh.faces)} faces, watertight: {land_mesh.is_watertight}")
+    print(f"  Ocean: {len(ocean_mesh.faces)} faces, watertight: {ocean_mesh.is_watertight}")
+    try:
+        combined = land_mesh.union(ocean_mesh, engine="manifold")
+        combined.fix_normals()
+        print(f"  Boolean union SUCCESS: {len(combined.faces)} faces, watertight: {combined.is_watertight}")
+    except Exception as e:
+        print(f"  Boolean union failed ({e}), falling back to concatenation...")
+        combined = trimesh.util.concatenate([land_mesh, ocean_mesh])
+        combined.fix_normals()
     print(
         f"  Combined: {len(combined.faces)} faces, watertight: {combined.is_watertight}"
     )
+
+    # ============ CAPITAL STAR (Jakarta) ============
+    print("\nAdding capital star (Jakarta)...")
+    jakarta_pt = Point(JAKARTA_LON, JAKARTA_LAT)
+    jakarta_mm = wgs84_to_stl_mm(jakarta_pt)
+    capital_xy_mm = (jakarta_mm.x, jakarta_mm.y)
+    print(f"  Jakarta in STL mm: ({capital_xy_mm[0]:.1f}, {capital_xy_mm[1]:.1f})")
+    combined = add_capital_star_extrusion(combined, capital_xy_mm, use_local_base=True)
 
     # Save
     from datetime import datetime
