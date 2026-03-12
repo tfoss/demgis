@@ -309,6 +309,87 @@ Trimesh boolean operations (difference, intersection) require:
 - **Simplification timing**: Always simplify BEFORE boolean ops (much faster)
 - **Error handling**: Boolean ops can fail; scripts catch exceptions and continue with original mesh
 
+## STL Visualization & Fitting Tools
+
+Four scripts for inspecting, aligning, and verifying STL pieces:
+
+### 1. `stl_viewer_gui.py` — Visual Inspection GUI
+
+Lightweight PyQt6 viewer for comparing STL iterations side-by-side. All pieces are freely movable (no fixed reference). Supports loading multiple STLs with the same filename from different directories (disambiguated by parent directory).
+
+```bash
+# View specific STLs
+conda run -n demgis python3 stl_viewer_gui.py piece1.stl piece2.stl
+
+# No args — opens file picker
+conda run -n demgis python3 stl_viewer_gui.py
+
+# Restore previous session
+conda run -n demgis python3 stl_viewer_gui.py --poses saved.json
+```
+
+**Features:**
+- Left-drag = translate piece, right-drag = rotate, scroll = zoom, middle-drag = pan
+- Z-slice controls: adjust base and land z-heights for cross-section inspection
+- Save/load poses (JSON), export PNG, fit view, add STLs at runtime
+- Side panel with per-piece dx/dy/θ spinboxes
+
+### 2. `stl_align_gui.py` — Interactive Alignment & QC GUI
+
+PyQt6 tool for aligning 2+ STL pieces with real-time border gap statistics. First piece is the fixed reference; others are movable.
+
+```bash
+conda run -n demgis python3 stl_align_gui.py reference.stl piece2.stl [piece3.stl ...]
+conda run -n demgis python3 stl_align_gui.py reference.stl piece2.stl --poses saved.json
+```
+
+**Features:**
+- Manual drag/rotate alignment with live border gap stats (median, P95, overlap)
+- "Run Alignment" optimizer from current manual pose
+- Border region drawing mode — focus alignment on specific edges
+- Save/load poses, export QC images
+
+### 3. `align_stls.py` — CLI Alignment Tool (also importable module)
+
+Automated STL alignment via ICP warm-up + Nelder-Mead optimization. Finds optimal translation (+ optional rotation) to minimize border gaps.
+
+```bash
+# Basic alignment (first STL is reference)
+conda run -n demgis python3 align_stls.py piece1.stl piece2.stl
+
+# With initial pose from slicer screenshot
+conda run -n demgis python3 align_stls.py piece1.stl piece2.stl --init-image screenshot.png
+
+# Multiple pieces, custom output prefix
+conda run -n demgis python3 align_stls.py piece1.stl piece2.stl piece3.stl -o my_align_
+```
+
+**Key functions (importable):**
+- `extract_outline(stl_path, z_height=0.5)` — STL → 2D polygon at z cross-section
+- `find_shared_border(outline1, outline2, threshold_mm=5.0)` — shared border detection
+- `align_pair(outline1, outline2, ...)` — ICP + scipy optimization
+- `compute_border_gaps(outline1, outline2, dx, dy, theta)` — border gap analysis
+- `COLORS` — 6-color palette for piece rendering
+
+**Outputs** (timestamped):
+- `align_*_aligned.png` — overview + border zoom
+- `align_*_border_<piece>.png` — per-pair border detail with gap histogram
+- `align_*_animation_<piece>.mp4` — video of alignment convergence
+
+### 4. `stl_fit_tool.py` — Fit Verification Tool
+
+Standalone CLI tool for verifying alignment between two adjacent STLs.
+
+```bash
+# Manual offset
+conda run -n demgis python3 stl_fit_tool.py piece1.stl piece2.stl --dx 5.0 --dy 0.0
+
+# Auto-align with ICP
+conda run -n demgis python3 stl_fit_tool.py piece1.stl piece2.stl --auto-align
+```
+
+**Outputs:** overlap area, border distance statistics (min/max/mean/median), visualization PNG.
+
 ## Common Pitfalls
 
 1. **Missing backends**: Boolean ops and simplification require extra packages (manifold3d, fast-simplification)
@@ -319,7 +400,4 @@ Trimesh boolean operations (difference, intersection) require:
 
 ## Git Status
 
-Multiple Python scripts are untracked (new development). Modified file:
-- `country_to_solid_stl_with_star.py`: Latest working version with capital star feature
-
-Recent development focused on getting capital star hole cutting to work reliably (commits show multiple attempts at star feature).
+Recent development focused on SE Asia ocean tiles (Indonesia, Malaysia Borneo, Philippines) with shared coordinate origins for cross-projection fit. STL visualization and alignment tools (`stl_viewer_gui.py`, `stl_align_gui.py`, `align_stls.py`) added for QC workflows.
