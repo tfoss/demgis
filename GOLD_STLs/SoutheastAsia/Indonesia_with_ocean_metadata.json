@@ -1,0 +1,21 @@
+{
+  "type": "country_with_ocean",
+  "country": "Indonesia",
+  "shared_origin_with": "Malaysia_borneo",
+  "dem_clip_origin_crs": {
+    "x": 4057047.088778328,
+    "y": -1024950.3129712287
+  },
+  "wgs84_bounds": {
+    "min_lon": 95.01465905000003,
+    "min_lat": -10.921075127999927,
+    "max_lon": 140.9771619060001,
+    "max_lat": 5.905218817000048
+  },
+  "parameters": {
+    "XY_MM_PER_PIXEL": 0.5,
+    "GLOBAL_XY_SCALE": 0.33,
+    "MIRROR_X": true,
+    "VECTOR_SIMPLIFY_DEGREES": 0.02
+  }
+}
