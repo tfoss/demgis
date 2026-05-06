@@ -6,15 +6,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **If you're starting a new Claude Code session, read these first:**
 
-1. **`RESUME_GUIDE.md`** - Quick 2-minute overview of current state and recent work
-2. **`PROJECT_STATUS.md`** - Complete project status, what's done, what's pending
-3. **This file (CLAUDE.md)** - Technical details and guidelines (below)
+1. **`MIGRATION_PLAN_DRAFT.md`** — current direction (Equal Earth migration in progress, 6-script package replacing the old 86-script pile)
+2. **`PILOT_RESULTS.md`** — most recent technical state: EE pilot, mesh-validity fix, what works / what doesn't
+3. **This file (CLAUDE.md)** — technical details and conventions (below)
+4. **`archive/scripts/REFERENCE.md`** — which archived scripts embody patterns to port during the refactor
 
-**Key facts**:
-- Eurasia is **COMPLETE**: 85 STLs in `GOLD_STLs/` directory
-- Recent work: Denmark island bridging (Jan 22, 2026)
-- Always use: `conda run -n demgis python3 <script>`
-- Critical files: `eurasia_2km_smooth_aea.tif`, `GOLD_STLs/`, `/Volumes/gray/DEM/eurasia_tiles/`
+**Where things are:**
+- Active code: ~11 .py files at root + `qc/` package
+- Archive: `archive/{scripts/{reference,dead}, docs, stl_outputs, qc_images, old_dems}/`
+- Pilot artefacts: `pilot_2km_eqearth.tif`, `STLs_pilot_eqearth_*/`, `pilot_eqearth_alignment.json`
+
+## Run environment — Docker
+
+The canonical way to run pipeline code is **inside the demgis container**, which gives a reproducible env (GDAL + conda + Node + Claude Code) and lets agents work with `--dangerously-skip-permissions` (the container is itself a sandbox). GUI tools (`stl_*_gui.py`, `stl_fit_tool.py`) are host-only — they need a display.
+
+```bash
+# First time / after Dockerfile changes
+docker compose build
+
+# Interactive shell inside the env
+docker compose run --rm demgis bash
+
+# One-shot
+docker compose run --rm demgis python3 make_pilot.py --countries Iceland
+
+# Agent session with full perms
+./claude-in-docker.sh
+```
+
+Volumes mounted by `docker-compose.yml`:
+- `.` → `/workspace` (the repo, edits persist on host)
+- `${DEM_DATA}` → `/data:ro` (raw tile cache; set in `.env`, e.g. `DEM_DATA=/Volumes/gray/DEM`)
+- `${STL_OUT:-./outputs}` → `/outputs` (generated STLs, gitignored on host)
+- `${HOME}/.claude` → `/root/.claude` (host's Claude auth state)
+
+**Host-side fallback**: if you need to run something natively (e.g. the GUI tools), the conda env is still defined by `environment.yml`. Recreate with `mamba env create -f environment.yml`, then prefix Python invocations with `conda run -n demgis python3 …`.
 
 ## Project Overview
 

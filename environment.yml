@@ -1,0 +1,32 @@
+name: demgis
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  # I/O & CRS
+  - rasterio
+  - geopandas
+  - pyproj
+  - shapely
+  - rtree
+  # Compute
+  - numpy
+  - scipy
+  - scikit-image
+  # Mesh
+  - trimesh
+  # AWS / HTTP for tile downloads
+  - boto3
+  - requests
+  # Plotting (geopandas + qc visualization)
+  - matplotlib-base
+  - pillow
+  # System libs that pip wheels link against
+  - libgfortran5
+  # GUI tools (host-only — skipped if you don't need them in-container)
+  - pyqt6
+  # pip-only deps
+  - pip
+  - pip:
+    - fast-simplification==0.1.12
+    - manifold3d==3.3.2

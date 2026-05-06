@@ -14,6 +14,11 @@ qc_check_*.json
 qc_pair_*.json
 qc_baseline_*.json
 
+# Docker compose placeholder dirs (created when env vars unset)
+_no_dem_data_set/
+outputs/
+.env
+
 # Output directories
 STLs_*/
 

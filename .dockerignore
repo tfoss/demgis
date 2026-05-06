@@ -1,0 +1,48 @@
+# Keep the build context small. Anything bind-mounted at runtime via
+# docker-compose doesn't need to be in the image.
+
+# Big binary outputs and inputs
+*.tif
+*.tiff
+*.dem
+*.stl
+*.vrt
+*.png
+*.aux.xml
+
+# The legacy archive (huge — bind-mounted from host instead if needed)
+archive/
+
+# Tile cache directories (bind-mounted via DEM_DATA volume)
+*_tiles/
+*_tiles_*/
+country_dems/
+
+# Git history (not needed inside image; git is for external use anyway)
+.git/
+
+# Python build artefacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/
+
+# Output directories (per CLAUDE.md timestamped-output convention)
+STLs_*/
+output_stl/
+country_stls_solid/
+tmp/
+
+# QC harness run outputs (regenerable)
+qc_check_*.json
+qc_pair_*.json
+qc_baseline_*.json
+
+# Environment files that mustn't leak into image
+.env
+.envrc

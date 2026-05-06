@@ -1,0 +1,41 @@
+# docker-compose.yml — local dev workflow for demgis.
+#
+# Volumes:
+#   .:/workspace                   the repo (live, edits persist on host)
+#   ${DEM_DATA}:/data              raw Copernicus tile cache (read-only by
+#                                  default — set RW=true in .env to override)
+#   ${STL_OUT:-./outputs}:/outputs generated STLs and DEMs that should NOT
+#                                  pollute the repo (gitignored locally too)
+#   ${HOME}/.claude:/root/.claude  host's Claude Code auth state, so claude
+#                                  inside the container is already logged in
+#
+# Set DEM_DATA in a .env file at the repo root, e.g.:
+#   DEM_DATA=/Volumes/gray/DEM
+#
+# Quick reference:
+#   docker compose build            (re)build the image
+#   docker compose run --rm demgis bash       interactive shell
+#   docker compose run --rm demgis python3 make_pilot.py --countries Iceland
+#   ./claude-in-docker.sh           interactive agent w/ skip-permissions
+
+services:
+  demgis:
+    build: .
+    image: demgis:latest
+    container_name: demgis
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    environment:
+      # Make matplotlib non-interactive by default in container (no display)
+      MPLBACKEND: Agg
+    volumes:
+      - .:/workspace
+      - ${DEM_DATA:-./_no_dem_data_set}:/data:ro
+      - ${STL_OUT:-./outputs}:/outputs
+      - ${HOME}/.claude:/root/.claude
+      # Persist conda pkgs cache so rebuilds reuse downloaded packages
+      - demgis-conda-pkgs:/opt/conda/pkgs
+
+volumes:
+  demgis-conda-pkgs:
