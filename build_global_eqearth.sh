@@ -64,35 +64,44 @@ WARP_AVERAGE=(
     -overwrite
 )
 
+# All status messages from these helpers go to stderr (>&2) so callers
+# can use `path=$(reproject_raw_zone ...)` to capture *only* the final
+# .tif path on stdout. Earlier version put echo on stdout, garbling the
+# captured value with the status messages.
 reproject_aea() {
     local src="$1" out="$2" mode="${3:-bilinear}"
     if [[ ! -f "$src" ]]; then
-        echo "  SKIP: $src not found"
+        echo "  SKIP: $src not found" >&2
         return 1
     fi
-    echo "  reproject $src -> $out (${mode})"
-    if [[ "$mode" == "average" ]]; then
-        gdalwarp "${WARP_AVERAGE[@]}" "$src" "$out" >/dev/null
+    if [[ -f "$out" ]] && [[ "$out" -nt "$src" ]]; then
+        echo "  cached: $out (newer than source)" >&2
     else
-        gdalwarp "${WARP_BILINEAR[@]}" "$src" "$out" >/dev/null
+        echo "  reproject $src -> $out (${mode})" >&2
+        if [[ "$mode" == "average" ]]; then
+            gdalwarp "${WARP_AVERAGE[@]}" "$src" "$out" >&2
+        else
+            gdalwarp "${WARP_BILINEAR[@]}" "$src" "$out" >&2
+        fi
     fi
+    echo "$out"
 }
 
 build_vrt_from_tiles() {
     local tile_dir="$1" vrt_path="$2"
     if [[ ! -d "$tile_dir" ]]; then
-        echo "  SKIP: $tile_dir not found"
+        echo "  SKIP: $tile_dir not found" >&2
         return 1
     fi
     local count
     count=$(find "$tile_dir" -maxdepth 2 -name "Copernicus_DSM_*.tif" 2>/dev/null | wc -l | tr -d ' ')
     if [[ "$count" -eq 0 ]]; then
-        echo "  SKIP: $tile_dir has 0 Copernicus tiles"
+        echo "  SKIP: $tile_dir has 0 Copernicus tiles" >&2
         return 1
     fi
-    echo "  building VRT from $count tiles in $tile_dir -> $vrt_path"
+    echo "  building VRT from $count tiles in $tile_dir -> $vrt_path" >&2
     find "$tile_dir" -maxdepth 2 -name "Copernicus_DSM_*.tif" > "${vrt_path}.list"
-    gdalbuildvrt -input_file_list "${vrt_path}.list" "$vrt_path" >/dev/null
+    gdalbuildvrt -input_file_list "${vrt_path}.list" "$vrt_path" >&2
     return 0
 }
 
@@ -100,9 +109,15 @@ reproject_raw_zone() {
     local zone_name="$1" tile_dir="$2"
     local vrt="$WORK_DIR/${zone_name}_raw.vrt"
     local out="$WORK_DIR/${zone_name}_${RES_KM}km_eqearth.tif"
+    if [[ -f "$out" ]] && [[ -d "$tile_dir" ]] && \
+       [[ "$out" -nt "$tile_dir" ]]; then
+        echo "  cached: $out (newer than $tile_dir)" >&2
+        echo "$out"
+        return 0
+    fi
     if build_vrt_from_tiles "$tile_dir" "$vrt"; then
-        echo "  reproject raw VRT -> $out (slow, all tiles read)"
-        gdalwarp "${WARP_AVERAGE[@]}" "$vrt" "$out" >/dev/null
+        echo "  reproject raw VRT -> $out (slow, all tiles read)" >&2
+        gdalwarp "${WARP_AVERAGE[@]}" "$vrt" "$out" >&2
         echo "$out"
     fi
 }
