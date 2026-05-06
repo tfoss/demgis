@@ -1,0 +1,80 @@
+{
+  "dem": "pilot_2km_eqearth.tif",
+  "dem_crs": "EPSG:8857",
+  "pixel_w": 2000.0,
+  "parameters": {
+    "XY_MM_PER_PIXEL": 0.25,
+    "GLOBAL_XY_SCALE": 0.33,
+    "MIRROR_X": true,
+    "VECTOR_SIMPLIFY_DEGREES": 0.02
+  },
+  "generated_at": "2026-05-05T20:42:26.447377",
+  "pieces": {
+    "France": {
+      "stl": "STLs_pilot_eqearth_20260505_203900/France_solid.stl",
+      "origin_crs": {
+        "x": -5808983.73823753,
+        "y": 6095456.416575757
+      },
+      "ncols": 5495,
+      "nrows": 4405,
+      "east_edge_crs_x": 5181016.26176247,
+      "is_mainland": true
+    },
+    "Iceland": {
+      "stl": "STLs_pilot_eqearth_20260505_203900/Iceland_solid.stl",
+      "origin_crs": {
+        "x": -1676983.73823753,
+        "y": 7449456.416575757
+      },
+      "ncols": 376,
+      "nrows": 122,
+      "east_edge_crs_x": -924983.73823753,
+      "is_mainland": true
+    },
+    "Malaysia": {
+      "stl": "STLs_pilot_eqearth_20260505_203900/Malaysia_solid.stl",
+      "origin_crs": {
+        "x": 9517016.26176247,
+        "y": 945456.4165757569
+      },
+      "ncols": 944,
+      "nrows": 419,
+      "east_edge_crs_x": 11405016.26176247,
+      "is_mainland": true
+    },
+    "Thailand": {
+      "stl": "STLs_pilot_eqearth_20260505_203900/Thailand_solid.stl",
+      "origin_crs": {
+        "x": 9095016.26176247,
+        "y": 2599456.416575757
+      },
+      "ncols": 430,
+      "nrows": 939,
+      "east_edge_crs_x": 9955016.26176247,
+      "is_mainland": true
+    },
+    "Indonesia": {
+      "stl": "STLs_pilot_eqearth_20260505_203900/Indonesia_solid.stl",
+      "origin_crs": {
+        "x": 9079016.26176247,
+        "y": 759456.4165757569
+      },
+      "ncols": 2210,
+      "nrows": 1080,
+      "east_edge_crs_x": 13499016.26176247,
+      "is_mainland": true
+    },
+    "Russia": {
+      "stl": "STLs_pilot_eqearth_20260505_203900/Russia_solid.stl",
+      "origin_crs": {
+        "x": -12344983.73823753,
+        "y": 7491456.416575757
+      },
+      "ncols": 12571,
+      "nrows": 1220,
+      "east_edge_crs_x": 12797016.26176247,
+      "is_mainland": true
+    }
+  }
+}

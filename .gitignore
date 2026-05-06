@@ -4,9 +4,15 @@
 *.stl
 *.vrt
 *.png
+*.aux.xml
 .DS_Store
 country_dems/
 __pycache__/
+
+# QC harness run outputs (timestamped JSON reports)
+qc_check_*.json
+qc_pair_*.json
+qc_baseline_*.json
 
 # Output directories
 STLs_*/

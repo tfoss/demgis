@@ -34,6 +34,7 @@ from make_all_sa_with_vector_clip import (
     DEM_SMOOTH_SIGMA_PIX, DEM_SMOOTH_BLEND, TARGET_FACES,
     VECTOR_SIMPLIFY_DEGREES, STAR_RADIUS_MM, STAR_INNER_RATIO,
     STAR_POINTS, CAPITALS,
+    STLGenerationError, manifold_clean,
     # Import all helper functions
     robust_extrude_polygon, clip_dem_to_country, smooth_mask_and_dem,
     build_surface_mesh, solidify_surface_mesh, simplify_mesh,
@@ -245,8 +246,10 @@ def clip_mesh_to_vector_with_islands(solid, country_geom_mm):
             continue
 
     if not cutters:
-        print("    WARNING: No valid cutters created, skipping vector clip")
-        return solid
+        raise STLGenerationError(
+            "Vector clip (with islands): no valid cutters could be built. "
+            "Skipping the clip would silently emit a pixelated raster boundary."
+        )
 
     # Union all cutters into single mesh
     if len(cutters) == 1:
@@ -266,17 +269,22 @@ def clip_mesh_to_vector_with_islands(solid, country_geom_mm):
         combined_cutter.update_faces(combined_cutter.unique_faces())
         trimesh.repair.fix_normals(combined_cutter)
         if not combined_cutter.is_volume:
-            print(f"    WARNING: Cutter still not a volume after repair, skipping vector clip")
-            return solid
+            raise STLGenerationError(
+                "Vector clip (with islands): combined cutter is not a watertight "
+                "volume even after repair. Skipping the clip would silently emit "
+                "a pixelated raster boundary."
+            )
 
-    # Perform the intersection (don't require solid to be a volume - manifold engine can handle it)
-    try:
-        result = solid.intersection(combined_cutter, engine='manifold')
-        print(f"    Vector clip: {len(solid.faces)} -> {len(result.faces)} faces")
-        return result
-    except Exception as e:
-        print(f"    WARNING: Vector clip failed: {e}")
-        return solid
+    # Let exceptions propagate — silent fallback to the unclipped mesh is the
+    # bug class that produced months of pixelated coastlines (Jan 2026).
+    result = solid.intersection(combined_cutter, engine='manifold')
+    if result is None or len(result.faces) == 0:
+        raise STLGenerationError(
+            "Vector clip (with islands): intersection returned an empty mesh."
+        )
+    result = manifold_clean(result)
+    print(f"    Vector clip: {len(solid.faces)} -> {len(result.faces)} faces")
+    return result
 
 
 def get_country_geom_in_mm_with_islands(country_geom, dem_transform, step):

@@ -20,6 +20,55 @@ from scipy.ndimage import gaussian_filter, label
 from shapely.geometry import Point, Polygon, box
 from shapely.ops import unary_union
 
+
+class STLGenerationError(RuntimeError):
+    """Raised when an STL cannot be generated correctly.
+
+    Used in place of silent fallbacks (returning an unclipped mesh, a mesh
+    without a capital star, etc.) so that a "successful" run never silently
+    produces a degraded STL. The per-country loop in main() catches this and
+    continues to the next country, logging the failure.
+    """
+
+
+def manifold_clean(mesh):
+    """Route a mesh through manifold3d to topologically clean it up.
+
+    Why this exists: trimesh's boolean ops (intersection, difference, union)
+    via the manifold3d engine return a Trimesh that often *appears* watertight
+    in memory because near-coincident vertices are stored as separate entries.
+    On STL export the float32-roundtripped vertices merge, exposing duplicate
+    faces / non-manifold edges that were silently present.
+
+    The fix is to feed the trimesh result back through manifold3d once more
+    (constructing a Manifold and exporting it back to a Mesh), which performs
+    the proper topological dedup. Verified on the EE pilot: drops the
+    duplicate faces left by `solid.difference()` at the capital star
+    boundary, leaving a mesh that is watertight both in-memory AND after STL
+    roundtrip.
+    """
+    from manifold3d import Manifold, Mesh as M3Mesh
+
+    m3 = M3Mesh(
+        vert_properties=mesh.vertices.astype(np.float32),
+        tri_verts=mesh.faces.astype(np.uint32),
+    )
+    out = Manifold(m3).to_mesh()
+    cleaned = trimesh.Trimesh(
+        vertices=np.array(out.vert_properties)[:, :3],
+        faces=np.array(out.tri_verts),
+    )
+    if not cleaned.is_volume:
+        # Manifold3d should guarantee a volume by construction. If it doesn't,
+        # input was so malformed that we shouldn't silently ship the result.
+        raise STLGenerationError(
+            f"manifold_clean: output mesh is not a watertight volume "
+            f"(faces={len(cleaned.faces)}, watertight={cleaned.is_watertight}, "
+            f"winding_consistent={cleaned.is_winding_consistent}). "
+            f"Input mesh has {len(mesh.faces)} faces."
+        )
+    return cleaned
+
 # Copy all parameters from make_all_sa_countries.py
 GLOBAL_XY_SCALE = 0.33
 MIRROR_X = True
@@ -40,12 +89,24 @@ DEM_SMOOTH_BLEND = 0.6  # Higher blend for smoother terrain; peaks preserved sep
 TARGET_FACES = 100000
 VECTOR_SIMPLIFY_DEGREES = 0.02
 
-STAR_RADIUS_MM = 6.0
-STAR_INNER_RATIO = 0.5
+# Capital star parameters. NOTE: STAR_RADIUS_MM and STAR_INNER_RATIO below are
+# overridden further down by the inlined chunk that used to live in
+# make_all_sa_countries.py. The values 4.0 / 0.45 are what the pipeline has
+# actually been using in production.
+STAR_RADIUS_MM = 4.0
+STAR_INNER_RATIO = 0.45
 STAR_POINTS = 4
 STAR_EXTRUDE_HEIGHT_MM = (
     2.0  # Height to extrude star above surface (when using --extrude-star)
 )
+
+# CAPITALS dict for all regions is defined ~20 lines below. Previously this
+# file had an exec(open("make_all_sa_countries.py")...) hack down at line ~217
+# which silently overwrote that dict with a 13-entry SA-only one — so for
+# years only the 13 SA capitals were actually available at runtime. The exec
+# is gone and the full 103-country dict below is now live. The canonical
+# source going forward is capitals.json (load_capitals.py); TODO(refactor):
+# replace the dict with `from load_capitals import CAPITALS`.
 
 # Lake removal (optional feature via --remove-lakes)
 MIN_LAKE_AREA_KM2 = 100.0  # Remove lakes larger than this (as holes in the mesh)
@@ -164,6 +225,8 @@ CAPITALS = {
     "Ukraine": ("Kyiv", 30.5234, 50.4501),
     "Romania": ("Bucharest", 26.1025, 44.4268),
     "Greece": ("Athens", 23.7275, 37.9838),
+    "Iceland": ("Reykjavik", -21.9426, 64.1466),
+    "Russia": ("Moscow", 37.6173, 55.7558),
 }
 
 
@@ -203,13 +266,9 @@ def robust_extrude_polygon(polygon, height):
             raise RuntimeError(f"Failed to extrude polygon: {e}")
 
 
-# Import all the helper functions from make_all_sa_countries.py
-exec(
-    open("make_all_sa_countries.py")
-    .read()
-    .split("def load_and_simplify_countries")[0]
-    .split("# Capital star parameters")[1]
-)
+# (The exec(open("make_all_sa_countries.py")...) hack that used to live here
+# has been inlined above — its content was just star params + the SA CAPITALS
+# dict. make_all_sa_countries.py is now archived under archive/scripts/dead/.)
 
 
 def load_and_simplify_countries(ne_path, dem_crs):
@@ -430,21 +489,31 @@ def simplify_mesh(mesh, target_faces):
     if original_faces <= target:
         return mesh
 
+    # Simplification is an optional optimization — a non-decimated STL is still
+    # correct, just larger. Catch failures, log them prominently, and keep the
+    # un-simplified mesh.
     try:
         simplified = mesh.simplify_quadric_decimation(face_count=target)
         simplified.fix_normals()
         simplified.fill_holes()
-
-        if not simplified.is_volume:
-            print(f"    WARNING: Simplified mesh is not a volume, using original")
-            return mesh
-
+    except Exception as e:
         print(
-            f"    Simplified: {original_faces} -> {len(simplified.faces)} faces ({100 * len(simplified.faces) / original_faces:.1f}%)"
+            f"    WARNING: Mesh simplification raised {type(e).__name__}: {e}. "
+            f"Falling back to un-simplified mesh ({original_faces} faces)."
         )
-        return simplified
-    except:
         return mesh
+
+    if not simplified.is_volume:
+        print(
+            f"    WARNING: Simplified mesh is not a watertight volume — "
+            f"falling back to un-simplified mesh ({original_faces} faces)."
+        )
+        return mesh
+
+    print(
+        f"    Simplified: {original_faces} -> {len(simplified.faces)} faces ({100 * len(simplified.faces) / original_faces:.1f}%)"
+    )
+    return simplified
 
 
 def get_capital_xy_mm(transform, dem_shape, country_name, step, dem_crs=None):
@@ -470,22 +539,24 @@ def get_capital_xy_mm(transform, dem_shape, country_name, step, dem_crs=None):
     capital_name, lon, lat = info
     nrows, ncols = dem_shape
 
-    try:
-        # If DEM is not in WGS84, transform capital coordinates
-        if dem_crs is not None and dem_crs != "EPSG:4326":
-            from pyproj import Transformer
+    # Let pyproj/rasterio errors propagate — a crashed transform is a real
+    # bug, not "capital absent". The only legitimate "no capital here" case
+    # is the missing-CAPITALS-entry path above.
+    if dem_crs is not None and dem_crs != "EPSG:4326":
+        from pyproj import Transformer
 
-            # Transform from WGS84 to DEM CRS
-            transformer = Transformer.from_crs("EPSG:4326", dem_crs, always_xy=True)
-            lon_proj, lat_proj = transformer.transform(lon, lat)
-            row, col = rowcol(transform, lon_proj, lat_proj)
-        else:
-            # DEM is in WGS84, use coordinates directly
-            row, col = rowcol(transform, lon, lat)
-    except:
-        return None
+        transformer = Transformer.from_crs("EPSG:4326", dem_crs, always_xy=True)
+        lon_proj, lat_proj = transformer.transform(lon, lat)
+        row, col = rowcol(transform, lon_proj, lat_proj)
+    else:
+        row, col = rowcol(transform, lon, lat)
 
     if not (0 <= row < nrows and 0 <= col < ncols):
+        print(
+            f"    WARNING: Capital '{capital_name}' for {country_name} at "
+            f"({lon:.3f}, {lat:.3f}) maps to ({row}, {col}) — outside DEM "
+            f"shape {dem_shape}. Star will be skipped."
+        )
         return None
 
     row_dec, col_dec = row // step, col // step
@@ -519,19 +590,17 @@ def cut_capital_star_hole(solid, capital_xy_mm):
     zmin, zmax = solid.bounds[:, 2]
     total_height = (zmax - zmin) + BASE_THICKNESS_MM * 2.0
 
-    try:
-        star_prism = robust_extrude_polygon(star_poly, total_height)
-        star_prism.apply_translation([0.0, 0.0, zmin - BASE_THICKNESS_MM])
+    star_prism = robust_extrude_polygon(star_poly, total_height)
+    star_prism.apply_translation([0.0, 0.0, zmin - BASE_THICKNESS_MM])
 
-        solid_cut = solid.difference(star_prism)
-        if solid_cut is None:
-            print("    WARNING: Star hole cut failed")
-            return solid
-        print(f"    Star hole cut at ({cx:.1f}, {cy:.1f}) mm")
-        return solid_cut
-    except Exception as e:
-        print(f"    WARNING: Star hole failed ({e})")
-        return solid
+    solid_cut = solid.difference(star_prism)
+    if solid_cut is None or len(solid_cut.faces) == 0:
+        raise STLGenerationError(
+            f"Capital star hole cut returned empty mesh at ({cx:.1f}, {cy:.1f}) mm"
+        )
+    solid_cut = manifold_clean(solid_cut)
+    print(f"    Star hole cut at ({cx:.1f}, {cy:.1f}) mm")
+    return solid_cut
 
 
 def is_capital_near_border(capital_lat_lon, country_geom, threshold_km=50):
@@ -663,27 +732,25 @@ def add_capital_star_extrusion(
         bottom_z = np.min(vertices[:, 2])
         base_type = "global baseline"
 
-    try:
-        # Calculate total height needed: from bottom to top + extrusion
-        total_height = (top_z - bottom_z) + extrude_height_mm
+    # Calculate total height needed: from bottom to top + extrusion
+    total_height = (top_z - bottom_z) + extrude_height_mm
 
-        # Create extruded star that goes from bottom to top+extrusion
-        star_prism = robust_extrude_polygon(star_poly, total_height)
-        star_prism.apply_translation([0.0, 0.0, bottom_z])
+    # Create extruded star that goes from bottom to top+extrusion
+    star_prism = robust_extrude_polygon(star_poly, total_height)
+    star_prism.apply_translation([0.0, 0.0, bottom_z])
 
-        # Union the star with the solid
-        result = solid.union(star_prism)
-        if result is None:
-            print("    WARNING: Star extrusion union failed")
-            return solid
-
-        print(
-            f"    Star extruded at ({cx:.1f}, {cy:.1f}) mm, from {base_type} to +{extrude_height_mm:.1f}mm above terrain"
+    # Union the star with the solid
+    result = solid.union(star_prism)
+    if result is None or len(result.faces) == 0:
+        raise STLGenerationError(
+            f"Capital star extrusion union returned empty mesh at ({cx:.1f}, {cy:.1f}) mm"
         )
-        return result
-    except Exception as e:
-        print(f"    WARNING: Star extrusion failed ({e})")
-        return solid
+    result = manifold_clean(result)
+
+    print(
+        f"    Star extruded at ({cx:.1f}, {cy:.1f}) mm, from {base_type} to +{extrude_height_mm:.1f}mm above terrain"
+    )
+    return result
 
 
 def cut_lakes_from_mesh(
@@ -754,7 +821,7 @@ def cut_lakes_from_mesh(
             # Cut the lake from the solid
             result = solid.difference(lake_prism)
             if result is not None:
-                solid = result
+                solid = manifold_clean(result)
                 lakes_cut += 1
                 print(f"    Cut lake: {area_km2:.1f} km²")
             else:
@@ -885,8 +952,11 @@ def clip_mesh_to_vector(solid, country_geom_mm):
             continue
 
     if not cutters:
-        print("    WARNING: No valid cutters created, skipping vector clip")
-        return solid
+        raise STLGenerationError(
+            "Vector clip: no valid cutters could be built from country polygon "
+            "(all components were tiny artifacts or failed to extrude). "
+            "Skipping the clip would silently emit a pixelated raster boundary."
+        )
 
     # Union all cutters into single mesh
     if len(cutters) == 1:
@@ -910,22 +980,24 @@ def clip_mesh_to_vector(solid, country_geom_mm):
         combined_cutter.update_faces(combined_cutter.unique_faces())
         trimesh.repair.fix_normals(combined_cutter)
         if not combined_cutter.is_volume:
-            print(
-                f"    WARNING: Cutter still not a volume after repair, skipping vector clip"
+            raise STLGenerationError(
+                "Vector clip: combined cutter is not a watertight volume even "
+                "after repair. Skipping the clip would silently emit a pixelated "
+                "raster boundary."
             )
-            return solid
 
-    # Perform the intersection
-    try:
-        result = solid.intersection(combined_cutter, engine="manifold")
-        if result is None or len(result.faces) == 0:
-            print("    WARNING: Vector clip returned empty, using original")
-            return solid
-        print(f"    Vector clip: {len(solid.faces)} -> {len(result.faces)} faces")
-        return result
-    except Exception as e:
-        print(f"    WARNING: Vector clip failed: {e}")
-        return solid
+    # Perform the intersection — let exceptions propagate; a silent fallback
+    # to the unclipped raster mesh is exactly the bug that produced months of
+    # pixelated coastlines (CURRENT_STATE_NOTES.md, Jan 2026).
+    result = solid.intersection(combined_cutter, engine="manifold")
+    if result is None or len(result.faces) == 0:
+        raise STLGenerationError(
+            "Vector clip: intersection returned an empty mesh. The country "
+            "polygon may not overlap the surface mesh in the expected way."
+        )
+    result = manifold_clean(result)
+    print(f"    Vector clip: {len(solid.faces)} -> {len(result.faces)} faces")
+    return result
 
 
 def validate_dem_coverage(country_name, country_geom, dem_src):
@@ -1135,6 +1207,15 @@ def process_country(
         v[:, 0] -= v[:, 0].min()
         solid.vertices = v
 
+    # Final manifold_clean BEFORE export. The earlier clean inside
+    # cut_capital_star_hole produced a mesh that was watertight at that
+    # point's coordinate precision, but the subsequent apply_scale and
+    # MIRROR_X operations re-introduce float-precision drift in the vertex
+    # coords that can leave the post-roundtrip mesh non-manifold (observed
+    # on Malaysia in the EE pilot — capital star edges had count=4 after
+    # STL load, despite being clean in memory between star cut and scale).
+    solid = manifold_clean(solid)
+
     # Export
     suffix = "_starup" if extrude_star else "_solid"
     out_path = os.path.join(output_dir, f"{country_name.replace(' ', '_')}{suffix}.stl")
@@ -1189,6 +1270,9 @@ def main():
 
     target_faces = args.target_faces if args.target_faces > 0 else None
 
+    succeeded = []
+    failed = []  # list of (country_name, error_type, message)
+
     for country_name, country_geom in countries.items():
         try:
             process_country(
@@ -1204,14 +1288,39 @@ def main():
                 min_lake_area_km2=args.min_lake_area,
                 save_png=args.save_png,
             )
+            succeeded.append(country_name)
+        except STLGenerationError as e:
+            print(f"\n!!! STL FAILED for {country_name}: {e}\n")
+            failed.append((country_name, "STLGenerationError", str(e)))
         except Exception as e:
-            print(f"\nERROR: {country_name}: {e}")
+            print(f"\n!!! UNEXPECTED ERROR for {country_name}: {e}")
             import traceback
 
             traceback.print_exc()
+            failed.append((country_name, type(e).__name__, str(e)))
 
     dem_src.close()
-    print(f"\nAll done! Files in: {args.output_dir}")
+
+    print(f"\n{'=' * 60}")
+    print(f"Run summary: {len(succeeded)} succeeded, {len(failed)} failed")
+    print(f"{'=' * 60}")
+    if failed:
+        print("FAILED COUNTRIES:")
+        for name, err_type, msg in failed:
+            print(f"  - {name} ({err_type}): {msg}")
+        # Persist failure manifest for QC tooling to consume.
+        manifest_path = os.path.join(args.output_dir, "_failed_countries.json")
+        with open(manifest_path, "w") as f:
+            json.dump(
+                [
+                    {"country": n, "error_type": t, "message": m}
+                    for n, t, m in failed
+                ],
+                f,
+                indent=2,
+            )
+        print(f"\nFailure manifest written to: {manifest_path}")
+    print(f"\nFiles in: {args.output_dir}")
 
 
 if __name__ == "__main__":
