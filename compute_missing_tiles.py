@@ -57,12 +57,19 @@ AEA_RASTERS = [
 ]
 
 
-def open_aea_rasters(repo_root: Path):
+def open_aea_rasters(repo_root: Path, exclude_names=()):
     """Return list of (path, dataset, transformer-from-WGS84, ndarray) for
     each canonical AEA raster present in repo_root. Missing files are
-    silently skipped — the gap report just won't credit their coverage."""
+    silently skipped — the gap report just won't credit their coverage.
+
+    `exclude_names` is an iterable of basenames to skip (e.g. force-need
+    raws for those zones). Names match against AEA_RASTERS entries.
+    """
+    excluded = set(exclude_names)
     out = []
     for fn in AEA_RASTERS:
+        if fn in excluded:
+            continue
         p = repo_root / fn
         if not p.exists():
             continue
@@ -274,6 +281,13 @@ def main():
                          "(e.g. a from-scratch Equal Earth production DEM) "
                          "regardless of whether existing AEA rasters could "
                          "supply the area.")
+    ap.add_argument("--exclude-aea-rasters", nargs="+", default=[],
+                    help="Selectively disable AEA-coverage credit for the "
+                         "named rasters only (others still credited). Use "
+                         "when raws exist for some regions but you want to "
+                         "force fresh raw downloads for a specific zone — "
+                         "e.g. --exclude-aea-rasters africa_2km_smooth_aea.tif "
+                         "iceland_2km_smooth_aea.tif")
     ap.add_argument("--repo-root", type=Path, default=Path("."),
                     help="Where to look for canonical AEA rasters.")
     ap.add_argument("--tilelist-30m", type=Path,
@@ -320,10 +334,12 @@ def main():
     # ----- Open AEA rasters for coverage credit -----
     aea_rasters = []
     if not args.ignore_aea_coverage:
-        aea_rasters = open_aea_rasters(args.repo_root)
+        aea_rasters = open_aea_rasters(args.repo_root, exclude_names=args.exclude_aea_rasters)
         print(f"\nCanonical AEA rasters loaded: {len(aea_rasters)}")
         for p, _, _, _ in aea_rasters:
             print(f"  {p.name}")
+        if args.exclude_aea_rasters:
+            print(f"  (excluded from AEA credit: {args.exclude_aea_rasters})")
 
     # ----- Compute missing -----
     missing_30m: Set[Tuple[int, int]] = set()

@@ -120,16 +120,17 @@ if [[ "$FROM_RAW" -eq 1 ]]; then
     if path=$(reproject_raw_zone "sa" "sa_tiles"); then SOURCES+=("$path"); fi
     if path=$(reproject_raw_zone "nca" "nca_tiles"); then SOURCES+=("$path"); fi
 
-    # Africa — no raws on this machine; fall back to AEA
-    out="$WORK_DIR/africa_${RES_KM}km_eqearth.tif"
-    if reproject_aea "africa_2km_smooth_aea.tif" "$out"; then SOURCES+=("$out"); fi
+    # Africa — try /Volumes/gray/DEM/africa_tiles first, fall back to AEA
+    if path=$(reproject_raw_zone "africa" "/Volumes/gray/DEM/africa_tiles"); then
+        SOURCES+=("$path")
+    else
+        out="$WORK_DIR/africa_${RES_KM}km_eqearth.tif"
+        if reproject_aea "africa_2km_smooth_aea.tif" "$out"; then SOURCES+=("$out"); fi
+    fi
 
-    # Eurasia, SE Asia/Oceania, Iceland — raws on /Volumes/gray/DEM
+    # Eurasia raws — covers Iceland too (the cache bbox extends past -25°W)
     if path=$(reproject_raw_zone "eurasia"        "/Volumes/gray/DEM/eurasia_tiles"); then SOURCES+=("$path"); fi
     if path=$(reproject_raw_zone "seasia_oceania" "/Volumes/gray/DEM/seasia_oceania_tiles"); then SOURCES+=("$path"); fi
-    # Iceland: no raws; fall back to AEA
-    out="$WORK_DIR/iceland_${RES_KM}km_eqearth.tif"
-    if reproject_aea "iceland_2km_smooth_aea.tif" "$out"; then SOURCES+=("$out"); fi
 
 else
     echo "=== FROM-AEA path: reprojecting the 6 canonical AEA rasters into EE ==="
