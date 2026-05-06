@@ -35,6 +35,8 @@ data/ne/*.txt
 # Tile lists (generated, can be recreated)
 *_tile_urls_s3.txt
 tileList.txt
+missing_tiles*.txt
+missing_tiles*_s5cmd.txt
 
 # Tile directories (large DEM files)
 caucasus_tiles/
