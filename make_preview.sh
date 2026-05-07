@@ -1,19 +1,27 @@
 #!/bin/bash
 # make_preview.sh — produce a Preview-displayable color-relief + hillshade
-# RGB TIF from a single-band elevation DEM.
+# image from a single-band elevation DEM. Output format inferred from the
+# extension: .png writes PNG (smaller, universal viewer support, no
+# georef); .tif writes RGBA GeoTIFF (preserves CRS, larger).
 #
-# Usage:  bash make_preview.sh INPUT.tif [OUTPUT.tif]
-# If OUTPUT is omitted, defaults to INPUT_preview.tif
+# Usage:  bash make_preview.sh INPUT.tif [OUTPUT.{png,tif}]
+# If OUTPUT is omitted, defaults to INPUT_preview.png
 
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-    echo "Usage: $0 INPUT.tif [OUTPUT.tif]"
+    echo "Usage: $0 INPUT.tif [OUTPUT.{png,tif}]"
     exit 1
 fi
 
 IN="$1"
-OUT="${2:-${IN%.tif}_preview.tif}"
+OUT="${2:-${IN%.tif}_preview.png}"
+EXT=$(echo "${OUT##*.}" | tr '[:upper:]' '[:lower:]')
+case "$EXT" in
+    png)         DRIVER=PNG    ;;
+    tif|tiff)    DRIVER=GTiff  ;;
+    *) echo "Unsupported output extension: .$EXT (use .png or .tif)"; exit 1 ;;
+esac
 WORK=$(mktemp -d)
 trap "rm -rf $WORK" EXIT
 
@@ -45,7 +53,7 @@ echo "[3/4] Color-relief..."
 gdaldem color-relief "$WORK/dem.tif" "$WORK/colors.txt" "$WORK/color.tif" \
     -co COMPRESS=LZW -alpha >/dev/null
 
-echo "[4/4] Blending hillshade over color -> $OUT ..."
+echo "[4/4] Blending hillshade over color -> $OUT ($DRIVER)..."
 python3 - <<PYEOF
 import rasterio, numpy as np
 hs = rasterio.open("$WORK/hillshade.tif").read(1).astype(np.float32) / 255.0
@@ -57,10 +65,14 @@ out = np.stack(
     [np.clip(b.astype(np.float32) * hs, 0, 255).astype(np.uint8) for b in bands[:3]]
     + bands[3:]
 )
-profile.update(
-    count=out.shape[0], dtype="uint8", compress="LZW",
-    tiled=True, blockxsize=256, blockysize=256,
-)
+driver = "$DRIVER"
+profile.update(count=out.shape[0], dtype="uint8", driver=driver)
+if driver == "GTiff":
+    profile.update(compress="LZW", tiled=True, blockxsize=256, blockysize=256)
+else:
+    # PNG ignores TIFF tiling/compression options; setting them errors.
+    for k in ("compress", "tiled", "blockxsize", "blockysize", "interleave"):
+        profile.pop(k, None)
 with rasterio.open("$OUT", "w", **profile) as dst:
     dst.write(out)
 PYEOF
