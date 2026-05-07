@@ -51,14 +51,27 @@ OUT="world_${RES_KM}km_eqearth.tif"
 WORK_DIR="_eqearth_intermediates"
 mkdir -p "$WORK_DIR"
 
+# Force explicit global target extent (-te) and target-extent CRS (-te_srs).
+# Without this, gdalwarp tries to auto-detect output extent from the source's
+# transformed corners, which truncates badly on multi-tile inputs that span
+# wide longitudes / high latitudes (this bug produced output cropped at 46°N
+# for gap_tiles, 67°N for eurasia, S35 for seasia, etc on the first run).
+# With -te in WGS84 covering the full globe, every per-zone gdalwarp produces
+# a globally-aligned grid of the same shape; data only appears where the
+# source had data, mosaicking is then trivial. LZW compresses the empty
+# regions efficiently so file sizes stay reasonable.
+GLOBAL_EXTENT=(-te -180 -89 180 89 -te_srs EPSG:4326)
+
 WARP_BILINEAR=(
     -t_srs "$EQEARTH" -tr "$RES" "$RES" -r bilinear
+    "${GLOBAL_EXTENT[@]}"
     -multi -wo NUM_THREADS=ALL_CPUS
     -co COMPRESS=LZW -co TILED=YES -co BIGTIFF=IF_SAFER
     -overwrite
 )
 WARP_AVERAGE=(
     -t_srs "$EQEARTH" -tr "$RES" "$RES" -r average
+    "${GLOBAL_EXTENT[@]}"
     -multi -wo NUM_THREADS=ALL_CPUS
     -co COMPRESS=LZW -co TILED=YES -co BIGTIFF=IF_SAFER
     -overwrite
