@@ -149,7 +149,12 @@ if [[ "$FROM_RAW" -eq 1 ]]; then
     echo "    zone's per-tile VRT)."
     echo
 
+    # Canonical raw tile dir (post tile-cache flatten) listed first.
+    # Old per-region dirs kept for back-compat in case the flatten
+    # hasn't been done or is partial — gdalbuildvrt dedupes by
+    # filename so duplicates between dirs are harmless.
     ALL_RAW_DIRS=(
+        "/Volumes/gray/DEM/raw_tiles"
         "/Volumes/gray/DEM/eurasia_tiles"
         "/Volumes/gray/DEM/seasia_oceania_tiles"
         "/Volumes/gray/DEM/africa_tiles"

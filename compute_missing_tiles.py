@@ -260,13 +260,17 @@ def main():
                     "covering printable countries that aren't yet cached."
     )
     ap.add_argument("--cache-dir", type=Path, nargs="+",
-                    default=[Path("/Volumes/gray/DEM"),
+                    default=[Path("/Volumes/gray/DEM/raw_tiles"),
+                             Path("/Volumes/gray/DEM"),
                              Path("nca_tiles"), Path("sa_tiles"),
                              Path("eurasia_tiles_90m"),
                              Path("middle_east_central_asia_tiles_90m")],
                     help="One or more dirs recursively scanned for "
                          "existing tiles. Defaults match this machine's "
-                         "layout (gray external disk + local NCA/SA caches).")
+                         "layout: canonical raw_tiles/ first (post tile-"
+                         "cache flatten), then the old per-region dirs "
+                         "for back-compat. walk_cache dedupes by basename "
+                         "so duplicate listings across dirs are harmless.")
     ap.add_argument("--out-dir", type=Path,
                     default=Path("/Volumes/gray/DEM/gap_tiles"),
                     help="Where the new tiles should land on disk after "
