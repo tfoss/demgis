@@ -140,25 +140,55 @@ reproject_raw_zone() {
 SOURCES=()
 
 if [[ "$FROM_RAW" -eq 1 ]]; then
-    echo "=== FROM-RAW path: reprojecting raw Copernicus tiles into EE ==="
-    echo "    (this is slow — gdalwarp reads every source tile per zone)"
+    echo "=== FROM-RAW path: combined-VRT of all raw Copernicus tiles ==="
+    echo "    Builds ONE VRT from every raw tile dir, reprojects once to EE."
+    echo "    Avoids the 'which tile is in which zone' miscount that left"
+    echo "    holes in the previous per-zone build (e.g. southern African"
+    echo "    tiles physically present in gap_tiles/ were only being read"
+    echo "    by the gap_tiles zone and therefore missing from the africa"
+    echo "    zone's per-tile VRT)."
     echo
 
-    # SA — local nca_tiles+sa_tiles take priority (more recent; better)
-    if path=$(reproject_raw_zone "sa" "sa_tiles"); then SOURCES+=("$path"); fi
-    if path=$(reproject_raw_zone "nca" "nca_tiles"); then SOURCES+=("$path"); fi
+    ALL_RAW_DIRS=(
+        "/Volumes/gray/DEM/eurasia_tiles"
+        "/Volumes/gray/DEM/seasia_oceania_tiles"
+        "/Volumes/gray/DEM/africa_tiles"
+        "/Volumes/gray/DEM/gap_tiles"
+        "nca_tiles"
+        "sa_tiles"
+    )
 
-    # Africa — try /Volumes/gray/DEM/africa_tiles first, fall back to AEA
-    if path=$(reproject_raw_zone "africa" "/Volumes/gray/DEM/africa_tiles"); then
-        SOURCES+=("$path")
-    else
-        out="$WORK_DIR/africa_${RES_KM}km_eqearth.tif"
-        if reproject_aea "africa_2km_smooth_aea.tif" "$out"; then SOURCES+=("$out"); fi
+    COMBINED_VRT="$WORK_DIR/all_raw.vrt"
+    COMBINED_LIST="$WORK_DIR/all_raw.vrt.list"
+    : > "$COMBINED_LIST"
+    total=0
+    for d in "${ALL_RAW_DIRS[@]}"; do
+        if [[ -d "$d" ]]; then
+            n=$(find "$d" -maxdepth 2 -name "Copernicus_DSM_*.tif" 2>/dev/null | tee -a "$COMBINED_LIST" | wc -l | tr -d ' ')
+            echo "  $d: $n tiles" >&2
+            total=$((total + n))
+        else
+            echo "  $d: missing, skipping" >&2
+        fi
+    done
+    echo "  Total tiles in combined VRT: $total" >&2
+
+    if [[ "$total" -eq 0 ]]; then
+        echo "ERROR: no raw tiles found in any source dir" >&2
+        exit 1
     fi
 
-    # Eurasia raws — covers Iceland too (the cache bbox extends past -25°W)
-    if path=$(reproject_raw_zone "eurasia"        "/Volumes/gray/DEM/eurasia_tiles"); then SOURCES+=("$path"); fi
-    if path=$(reproject_raw_zone "seasia_oceania" "/Volumes/gray/DEM/seasia_oceania_tiles"); then SOURCES+=("$path"); fi
+    echo "  Building VRT..." >&2
+    gdalbuildvrt -input_file_list "$COMBINED_LIST" "$COMBINED_VRT" >&2
+
+    out="$WORK_DIR/world_raw_${RES_KM}km_eqearth.tif"
+    if [[ -f "$out" ]] && [[ "$out" -nt "$COMBINED_VRT" ]]; then
+        echo "  cached: $out" >&2
+    else
+        echo "  reproject combined VRT -> $out (slow, ~$total tiles read)" >&2
+        gdalwarp "${WARP_AVERAGE[@]}" "$COMBINED_VRT" "$out" >&2
+    fi
+    SOURCES+=("$out")
 
 else
     echo "=== FROM-AEA path: reprojecting the 6 canonical AEA rasters into EE ==="
@@ -179,8 +209,9 @@ else
     done
 fi
 
-# ----- Gap tiles (always layered last so they take priority) -----
-if [[ -d "$GAP_TILES_DIR" ]]; then
+# ----- Gap tiles (FROM-AEA only — in FROM-RAW they're already in the
+#       combined VRT above) -----
+if [[ "$FROM_RAW" -eq 0 ]] && [[ -d "$GAP_TILES_DIR" ]]; then
     echo
     echo "=== Layering in gap tiles from $GAP_TILES_DIR (highest priority) ==="
     if path=$(reproject_raw_zone "gap_tiles" "$GAP_TILES_DIR"); then SOURCES+=("$path"); fi
