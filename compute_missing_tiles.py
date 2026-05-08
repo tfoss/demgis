@@ -80,24 +80,35 @@ def open_aea_rasters(repo_root: Path, exclude_names=()):
 
 
 def tile_covered_by_aea(lat: int, lon: int, aea_rasters) -> bool:
-    """True if any AEA raster has non-NoData elevation at any of 9 sample
-    points within the (lat, lon) 1° tile. Sampling a 3×3 grid (vs just the
-    center) avoids false negatives at coastal tiles where the center
-    happens to be in ocean (NoData) but the tile contains real land that
-    the AEA raster actually has data for."""
+    """True if some AEA raster has non-NoData elevation at *all* 9 sample
+    points (3×3 grid) within the (lat, lon) 1° tile.
+
+    Strict (all-9, not any-1) because the prior any-1 version over-credited:
+    AEA rasters have spillover at projection edges + Gaussian-smoothed
+    halos, so a single pixel hit was easy to get for tiles thousands of km
+    from the AEA's actual data. Stricter rule means a tile is only credited
+    if a single AEA raster covers it densely. Coastal/edge tiles with any
+    ocean nodata in the 9-point grid will queue for raw-tile download.
+    """
     sample_pts = [
         (lon + dx, lat + dy)
         for dy in (0.2, 0.5, 0.8) for dx in (0.2, 0.5, 0.8)
     ]
     for _, ds, t, arr in aea_rasters:
+        all_in = True
         for clon, clat in sample_pts:
             x, y = t.transform(clon, clat)
             col = int((x - ds.bounds.left) / ds.transform.a)
             row = int((ds.bounds.top - y) / -ds.transform.e)
-            if 0 <= col < arr.shape[1] and 0 <= row < arr.shape[0]:
-                v = arr[row, col]
-                if v != 0 and v != -9999 and np.isfinite(v):
-                    return True
+            if not (0 <= col < arr.shape[1] and 0 <= row < arr.shape[0]):
+                all_in = False
+                break
+            v = arr[row, col]
+            if v == 0 or v == -9999 or not np.isfinite(v):
+                all_in = False
+                break
+        if all_in:
+            return True
     return False
 
 
