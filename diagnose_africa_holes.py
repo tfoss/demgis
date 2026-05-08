@@ -19,7 +19,12 @@ from pyproj import Transformer
 from shapely.geometry import box
 from shapely.ops import unary_union
 
-AFRICA_DIR = Path("/Volumes/gray/DEM/africa_tiles")
+RAW_DIRS   = [
+    Path("/Volumes/gray/DEM/raw_tiles"),       # canonical post-flatten
+    Path("/Volumes/gray/DEM/africa_tiles"),    # old per-region (pre-flatten)
+    Path("/Volumes/gray/DEM/eurasia_tiles"),
+    Path("/Volumes/gray/DEM/gap_tiles"),
+]
 WORLD_DEM  = Path("world_2km_eqearth.tif")
 NE_PATH    = Path("data/ne/ne_10m_admin_0_countries.shp")
 
@@ -61,16 +66,19 @@ def main():
                 needed.add((lat, lon))
     print(f"Tile cells needed (intersect Africa land): {len(needed)}")
 
-    # Check which are on disk and how big
+    # Check which are on disk and how big (across all candidate raw dirs)
     on_disk = {}
-    if AFRICA_DIR.exists():
-        for p in AFRICA_DIR.glob("Copernicus_DSM_COG_10_*_DEM.tif"):
-            on_disk[p.name] = p.stat().st_size
+    for d in RAW_DIRS:
+        if not d.exists():
+            continue
+        for p in d.glob("Copernicus_DSM_COG_10_*_DEM.tif"):
+            # First-found wins (canonical raw_tiles/ listed first)
+            on_disk.setdefault(p.name, (p.stat().st_size, str(d)))
 
     have    = sum(1 for c in needed if tile_name(*c) in on_disk)
     missing = sum(1 for c in needed if tile_name(*c) not in on_disk)
-    tiny    = [n for n, sz in on_disk.items() if sz < 100_000]
-    print(f"On disk:                  {len(on_disk)}")
+    tiny    = [n for n, (sz, _) in on_disk.items() if sz < 100_000]
+    print(f"On disk (any raw dir):    {len(on_disk)}")
     print(f"  - of needed:            {have}/{len(needed)}")
     print(f"  - tiny (<100KB):        {len(tiny)} (e.g. failed downloads)")
     print(f"Needed but NOT on disk:   {missing}")
@@ -107,8 +115,8 @@ def main():
             print("\nFirst 30 cells present-but-zero (download/VRT issue):")
             for lat, lon in present_zero[:30]:
                 fn = tile_name(lat, lon)
-                sz = on_disk.get(fn, 0)
-                print(f"  {fn}  ({sz/1024:.1f} KB)")
+                sz, src = on_disk.get(fn, (0, ""))
+                print(f"  {fn}  ({sz/1024:.1f} KB)  in {src}")
     else:
         print(f"world_2km_eqearth.tif not found at {WORLD_DEM}")
 
