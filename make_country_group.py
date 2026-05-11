@@ -168,12 +168,20 @@ def construct_bridges(
 # ---------------------------------------------------------------------------
 
 def load_member_geom_wgs84(member: str, ne: gpd.GeoDataFrame, group: CountryGroup):
-    """Load NE row for member, apply bbox clip + island filter + simplification."""
+    """Load NE row for member, apply bbox clip + island filter + simplification.
+
+    Returns (processed_geom, original_geom) — `original_geom` is the raw NE
+    polygon in WGS84 (no clip, no filter, no simplification) for the QC
+    visual to compare against. That way "missing" in the QC PNG includes
+    deliberately-filtered islands (e.g. Bornholm) AS WELL AS accidental
+    gaps, which is what the user wants to audit.
+    """
     sel = ne[ne["ADMIN"] == member]
     if sel.empty:
         raise ValueError(f"{member!r} not found in NE ADMIN")
     geom = unary_union(sel.geometry)
-    geom_wgs = gpd.GeoSeries([geom], crs=ne.crs).to_crs("EPSG:4326").iloc[0]
+    geom_wgs_original = gpd.GeoSeries([geom], crs=ne.crs).to_crs("EPSG:4326").iloc[0]
+    geom_wgs = geom_wgs_original
 
     if member in group.wgs84_bbox:
         geom_wgs = clip_to_wgs84_bbox(geom_wgs, group.wgs84_bbox[member])
@@ -193,7 +201,7 @@ def load_member_geom_wgs84(member: str, ne: gpd.GeoDataFrame, group: CountryGrou
     if pipe.VECTOR_SIMPLIFY_DEGREES > 0:
         geom_wgs = geom_wgs.simplify(pipe.VECTOR_SIMPLIFY_DEGREES,
                                      preserve_topology=True)
-    return geom_wgs
+    return geom_wgs, geom_wgs_original
 
 
 def reproject_to_dem_crs(geom_wgs, dem_crs):
@@ -273,12 +281,16 @@ def run_qc(
     out_dir: str,
     alignment: dict,
     qc_strict: bool,
+    member_ne_polygons_wgs84: Optional[dict] = None,
+    bridges_wgs84: Optional[list] = None,
 ) -> bool:
-    """Run per-piece (each member) + pairwise (bridges) QC. Write qc.json.
-    Returns True if all gating checks passed."""
+    """Run per-piece (each member) QC plus visual QC (PNG per member +
+    group overview). Write qc.json with metric pointers. Returns True if
+    all gating checks passed."""
     from qc.per_piece import run_all_per_piece_checks
     from qc.cli import _resolve_piece_transform
     from qc.report import QCReport
+    from qc.visual import render_group_visuals
 
     ne_path = os.path.join(os.path.dirname(__file__),
                            "data", "ne", "ne_10m_admin_0_countries.shp")
@@ -313,10 +325,25 @@ def run_qc(
         )
         report.add_child(child)
 
-    # Pairwise for bridge endpoints (intra-member bridges == same STL,
-    # already covered by per-piece). Cross-member would go here.
+    # Visual QC — per-member PNGs + group overview, all in the same
+    # timestamped dir. Each PNG shows NE polygon vs actual STL footprint
+    # with sym-diff highlights (red = missing, blue = extra).
+    print(f"\nRendering visual QC...")
+    visual_metrics = {}
+    try:
+        visual_metrics = render_group_visuals(
+            group_name=group.name,
+            out_dir=out_dir,
+            alignment=alignment,
+            member_ne_polygons_wgs84=member_ne_polygons_wgs84 or {},
+            bridges_wgs84=bridges_wgs84 or [],
+        )
+    except Exception as e:
+        print(f"  visual QC failed: {e}")
+        traceback.print_exc()
+    report.metadata["visual_metrics"] = visual_metrics
 
-    # Write
+    # Write JSON report (visual PNGs are next to it on disk)
     qc_path = os.path.join(out_dir, "qc.json")
     report.write(qc_path)
     print(f"\nQC report written: {qc_path}")
@@ -375,12 +402,17 @@ def main():
     ne = gpd.read_file(args.ne)
     print(f"  NE:     {len(ne)} countries loaded")
 
-    # 1. Load each member's WGS84 geometry (with bbox + island filter)
+    # 1. Load each member's WGS84 geometry (with bbox + island filter).
+    # Also keep the ORIGINAL NE polygon (no filter, no clip) for the QC
+    # visual — we want sym-diff to show deliberately-excluded islands too.
     print(f"\nLoading member geometries...")
     member_wgs84 = {}
+    member_ne_original = {}
     for member in group.members:
         print(f"  {member}:")
-        member_wgs84[member] = load_member_geom_wgs84(member, ne, group)
+        processed, original = load_member_geom_wgs84(member, ne, group)
+        member_wgs84[member] = processed
+        member_ne_original[member] = original
 
     # 2. Apply bridges (modifies member geoms in-place; produces bridge polys)
     bridge_polys_wgs84 = []
@@ -445,9 +477,13 @@ def main():
                 f, indent=2,
             )
 
-    # 7. QC
+    # 7. QC (per-piece + visual PNGs)
     if not args.no_qc and succeeded:
-        qc_passed = run_qc(group, out_dir, alignment, args.qc_strict)
+        qc_passed = run_qc(
+            group, out_dir, alignment, args.qc_strict,
+            member_ne_polygons_wgs84=member_ne_original,
+            bridges_wgs84=bridge_polys_wgs84,
+        )
         if not qc_passed:
             return 1
 
