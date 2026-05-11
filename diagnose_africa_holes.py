@@ -21,6 +21,7 @@ from shapely.ops import unary_union
 
 RAW_DIRS   = [
     Path("/Volumes/gray/DEM/raw_tiles"),       # canonical post-flatten
+    Path("/Users/tfoss/dem_tiles_overflow"),   # laptop overflow (since 2026-05-09)
     Path("/Volumes/gray/DEM/africa_tiles"),    # old per-region (pre-flatten)
     Path("/Volumes/gray/DEM/eurasia_tiles"),
     Path("/Volumes/gray/DEM/gap_tiles"),
@@ -31,12 +32,12 @@ NE_PATH    = Path("data/ne/ne_10m_admin_0_countries.shp")
 AFRICAN_COUNTRIES = [
     "Algeria","Angola","Benin","Botswana","Burkina Faso","Burundi",
     "Cameroon","Central African Republic","Chad","Democratic Republic of the Congo",
-    "Republic of Congo","Ivory Coast","Djibouti","Egypt","Equatorial Guinea",
+    "Republic of the Congo","Ivory Coast","Djibouti","Egypt","Equatorial Guinea",
     "Eritrea","eSwatini","Ethiopia","Gabon","Gambia","Ghana","Guinea",
     "Guinea-Bissau","Kenya","Lesotho","Liberia","Libya","Madagascar","Malawi",
     "Mali","Mauritania","Morocco","Mozambique","Namibia","Niger","Nigeria",
     "Rwanda","Senegal","Sierra Leone","Somalia","Somaliland","South Africa",
-    "South Sudan","Sudan","Tanzania","Togo","Tunisia","Uganda","Western Sahara",
+    "South Sudan","Sudan","United Republic of Tanzania","Togo","Tunisia","Uganda","Western Sahara",
     "Zambia","Zimbabwe",
 ]
 
@@ -117,6 +118,15 @@ def main():
                 fn = tile_name(lat, lon)
                 sz, src = on_disk.get(fn, (0, ""))
                 print(f"  {fn}  ({sz/1024:.1f} KB)  in {src}")
+
+            # Write FULL list to file for downstream deep-check
+            full_out = Path("africa_present_but_zero.txt")
+            with full_out.open("w") as f:
+                for lat, lon in present_zero:
+                    fn = tile_name(lat, lon)
+                    sz, src = on_disk.get(fn, (0, ""))
+                    f.write(f"{fn}\t{sz}\t{src}\n")
+            print(f"\nFull list ({len(present_zero)} tiles) written to {full_out}")
     else:
         print(f"world_2km_eqearth.tif not found at {WORLD_DEM}")
 

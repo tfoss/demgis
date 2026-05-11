@@ -155,6 +155,7 @@ if [[ "$FROM_RAW" -eq 1 ]]; then
     # filename so duplicates between dirs are harmless.
     ALL_RAW_DIRS=(
         "/Volumes/gray/DEM/raw_tiles"
+        "/Users/tfoss/dem_tiles_overflow"
         "/Volumes/gray/DEM/eurasia_tiles"
         "/Volumes/gray/DEM/seasia_oceania_tiles"
         "/Volumes/gray/DEM/africa_tiles"
