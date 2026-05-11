@@ -208,6 +208,35 @@ def reproject_to_dem_crs(geom_wgs, dem_crs):
     return gpd.GeoSeries([geom_wgs], crs="EPSG:4326").to_crs(dem_crs).iloc[0]
 
 
+def resolve_capital(
+    member: str, group: CountryGroup
+) -> Optional[tuple[str, float, float]]:
+    """Pick the effective capital for `member` in this group's context.
+
+    Order of precedence:
+      1. group.regional_capitals[member]   — explicit override
+      2. pipe.CAPITALS[member]             — canonical capital, IF it lies
+                                              inside group.wgs84_bbox[member]
+                                              (when one is set)
+      3. None — suppress the star entirely
+
+    Returns (city, lon, lat) or None.
+    """
+    if member in group.regional_capitals:
+        return group.regional_capitals[member]
+    default = pipe.CAPITALS.get(member)
+    if default is None:
+        return None
+    city, lon, lat = default
+    if member in group.wgs84_bbox:
+        minx, miny, maxx, maxy = group.wgs84_bbox[member]
+        if not (minx <= lon <= maxx and miny <= lat <= maxy):
+            print(f"    {member}: default capital {city} ({lon},{lat}) "
+                  f"outside wgs84_bbox — suppressing star")
+            return None
+    return default
+
+
 def patched_process_country(country_name, group: CountryGroup, *args, **kwargs):
     """Wrap process_country so coverage-check failures for COVERAGE_EXEMPT
     members don't abort the run."""
@@ -283,6 +312,7 @@ def run_qc(
     qc_strict: bool,
     member_ne_polygons_wgs84: Optional[dict] = None,
     bridges_wgs84: Optional[list] = None,
+    resolved_capitals: Optional[dict] = None,
 ) -> bool:
     """Run per-piece (each member) QC plus visual QC (PNG per member +
     group overview). Write qc.json with metric pointers. Returns True if
@@ -337,6 +367,7 @@ def run_qc(
             alignment=alignment,
             member_ne_polygons_wgs84=member_ne_polygons_wgs84 or {},
             bridges_wgs84=bridges_wgs84 or [],
+            resolved_capitals=resolved_capitals or {},
         )
     except Exception as e:
         print(f"  visual QC failed: {e}")
@@ -431,24 +462,46 @@ def main():
         bp_crs = reproject_to_dem_crs(bp_wgs, dem.crs)
         bridge_polys_crs_by_member.setdefault(bridge.a_member, []).append(bp_crs)
 
-    # 4. Render each member
+    # 4. Render each member.
+    # Resolve effective capital per member (regional override → default →
+    # suppress if outside bbox). For each member with a resolved capital,
+    # temporarily install it in the pipeline's CAPITALS dict so the cut /
+    # extrude step uses the right location. For suppressed members, remove
+    # the key so the star step no-ops cleanly.
+    resolved_capitals = {m: resolve_capital(m, group) for m in group.members}
+    saved_capitals = {m: pipe.CAPITALS.get(m) for m in group.members}
+    for member, cap in resolved_capitals.items():
+        if cap is None:
+            pipe.CAPITALS.pop(member, None)
+        else:
+            pipe.CAPITALS[member] = cap
+
     succeeded, failed = [], []
-    for member, geom_proj in member_proj.items():
-        try:
-            patched_process_country(
-                member, group, geom_proj, dem, dem.transform,
-                out_dir, pipe.XY_STEP, pipe.TARGET_FACES,
-                extrude_star=group.extrude_star.get(member, False),
-                bridge_polys_crs=bridge_polys_crs_by_member.get(member) or None,
-            )
-            succeeded.append(member)
-        except pipe.STLGenerationError as e:
-            print(f"\n!!! STL FAILED for {member}: {e}\n")
-            failed.append((member, "STLGenerationError", str(e)))
-        except Exception as e:
-            print(f"\n!!! UNEXPECTED ERROR for {member}: {e}")
-            traceback.print_exc()
-            failed.append((member, type(e).__name__, str(e)))
+    try:
+        for member, geom_proj in member_proj.items():
+            try:
+                patched_process_country(
+                    member, group, geom_proj, dem, dem.transform,
+                    out_dir, pipe.XY_STEP, pipe.TARGET_FACES,
+                    extrude_star=group.extrude_star.get(member, False),
+                    bridge_polys_crs=bridge_polys_crs_by_member.get(member) or None,
+                )
+                succeeded.append(member)
+            except pipe.STLGenerationError as e:
+                print(f"\n!!! STL FAILED for {member}: {e}\n")
+                failed.append((member, "STLGenerationError", str(e)))
+            except Exception as e:
+                print(f"\n!!! UNEXPECTED ERROR for {member}: {e}")
+                traceback.print_exc()
+                failed.append((member, type(e).__name__, str(e)))
+    finally:
+        # Restore CAPITALS to its pre-run state so subsequent runs from the
+        # same process don't see this group's regional overrides.
+        for member, saved in saved_capitals.items():
+            if saved is None:
+                pipe.CAPITALS.pop(member, None)
+            else:
+                pipe.CAPITALS[member] = saved
 
     # 5. Alignment JSON
     print(f"\nBuilding alignment.json...")
@@ -483,6 +536,7 @@ def main():
             group, out_dir, alignment, args.qc_strict,
             member_ne_polygons_wgs84=member_ne_original,
             bridges_wgs84=bridge_polys_wgs84,
+            resolved_capitals=resolved_capitals,
         )
         if not qc_passed:
             return 1

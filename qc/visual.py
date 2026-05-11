@@ -82,6 +82,7 @@ def plot_member(
     out_png: str,
     bridges_wgs84: Optional[list] = None,
     title_suffix: str = "",
+    capital: Optional[tuple] = None,
 ) -> Dict[str, Any]:
     """Make qc_<member>.png. Returns a dict of metrics for the report.
 
@@ -135,9 +136,10 @@ def plot_member(
             _plot_polygon(ax, bp, facecolor="orange", edgecolor="darkorange",
                           linewidth=1.0, alpha=0.7)
 
-    # Capital marker
-    if member in CAPITALS:
-        cap_name, lon, lat = CAPITALS[member]
+    # Capital marker — explicit override wins; otherwise no marker
+    # (driver's resolve_capital already handled fallback + suppression).
+    if capital is not None:
+        cap_name, lon, lat = capital
         ax.plot(lon, lat, marker="*", markersize=20, color="gold",
                 markeredgecolor="black", markeredgewidth=1.0,
                 label=f"capital: {cap_name}", zorder=5)
@@ -174,12 +176,12 @@ def plot_member(
     if bridges_wgs84:
         legend_items.append(Patch(facecolor="orange", edgecolor="darkorange",
                                   alpha=0.7, label="bridge zone"))
-    if member in CAPITALS:
+    if capital is not None:
         from matplotlib.lines import Line2D
         legend_items.append(Line2D([0], [0], marker="*", markersize=15,
                                    color="gold", markeredgecolor="black",
                                    linestyle="none",
-                                   label=f"capital: {CAPITALS[member][0]}"))
+                                   label=f"capital: {capital[0]}"))
     ax.legend(handles=legend_items, loc="upper right", fontsize=9, framealpha=0.9)
 
     plt.tight_layout()
@@ -194,7 +196,7 @@ def plot_member(
 
 def plot_group_overview(
     group_name: str,
-    members: Dict[str, Dict[str, Any]],   # name -> {ne_polygon, fp, color}
+    members: Dict[str, Dict[str, Any]],   # name -> {ne_polygon, fp, capital}
     bridges_wgs84: Optional[list],
     out_png: str,
 ):
@@ -224,8 +226,9 @@ def plot_group_overview(
             all_geoms.append(ne_geom)
         if fp is not None:
             all_geoms.append(fp)
-        if name in CAPITALS:
-            cap_name, lon, lat = CAPITALS[name]
+        cap = d.get("capital")
+        if cap is not None:
+            cap_name, lon, lat = cap
             ax.plot(lon, lat, marker="*", markersize=18, color="gold",
                     markeredgecolor="black", markeredgewidth=1.0, zorder=5)
 
@@ -266,6 +269,7 @@ def render_group_visuals(
     alignment: Dict[str, Any],
     member_ne_polygons_wgs84: Dict[str, Any],
     bridges_wgs84: Optional[list] = None,
+    resolved_capitals: Optional[Dict[str, Optional[tuple]]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """For each piece in alignment, render qc_<member>.png. Then render
     qc_group.png. Returns {member: metrics}.
@@ -277,6 +281,7 @@ def render_group_visuals(
     pixel_w = float(alignment.get("pixel_w", 2000.0))
     dem_crs = alignment.get("dem_crs")
 
+    resolved_capitals = resolved_capitals or {}
     metrics_by_member = {}
     member_plot_data = {}
     for member, piece in alignment.get("pieces", {}).items():
@@ -285,6 +290,7 @@ def render_group_visuals(
             print(f"    visual: skip {member} — STL not found at {stl_path}")
             continue
         tf = piece_transform_from_alignment(piece, parameters, pixel_w)
+        capital = resolved_capitals.get(member)
 
         out_png = os.path.join(out_dir, f"qc_{member.replace(' ', '_')}.png")
         ne_poly = member_ne_polygons_wgs84.get(member)
@@ -296,6 +302,7 @@ def render_group_visuals(
             dem_crs=dem_crs,
             out_png=out_png,
             bridges_wgs84=bridges_wgs84,
+            capital=capital,
         )
         metrics_by_member[member] = m
         # Stash footprint for group overview (re-extract is cheap but we
@@ -304,7 +311,8 @@ def render_group_visuals(
             fp = stl_footprint_wgs84(stl_path, tf, dem_crs)
         except Exception:
             fp = None
-        member_plot_data[member] = {"ne_polygon": ne_poly, "fp": fp}
+        member_plot_data[member] = {"ne_polygon": ne_poly, "fp": fp,
+                                    "capital": capital}
         print(f"    visual: wrote {out_png}")
 
     overview_png = os.path.join(out_dir, "qc_group.png")

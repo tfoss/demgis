@@ -80,6 +80,13 @@ class CountryGroup:
     # sub-region of a country (Tierra del Fuego = (-76, -56, -63, -52) of both
     # Argentina and Chile). Missing key = no clip.
     wgs84_bbox: dict[str, tuple[float, float, float, float]] = field(default_factory=dict)
+    # Per-member override of the canonical capital. Tuple is (city, lon, lat).
+    # Used for sub-region groups where the country's actual capital is outside
+    # the wgs84_bbox clip (e.g. Tierra del Fuego: Argentina's Buenos Aires is
+    # 2000 km north of the clip, so we override with Ushuaia). If unset AND the
+    # default capital from CAPITALS is outside wgs84_bbox, the star is
+    # suppressed entirely.
+    regional_capitals: dict[str, tuple[str, float, float]] = field(default_factory=dict)
     notes: str = ""
 
 
@@ -131,6 +138,14 @@ TIERRA_DEL_FUEGO = CountryGroup(
         "Argentina": (-76.0, -56.0, -63.0, -52.0),
         "Chile":     (-76.0, -56.0, -63.0, -52.0),
     },
+    regional_capitals={
+        # Default capitals (Buenos Aires, Santiago) are far north of the clip.
+        # Use the southernmost provincial capitals instead.
+        "Argentina": ("Ushuaia",      -68.3030, -54.8019),
+        "Chile":     ("Punta Arenas", -70.9171, -53.1638),
+    },
+    # Coastal capitals — extrude the star so it sits above the surface.
+    extrude_star={"Argentina": True, "Chile": True},
     notes="Southern tip of South America (~Ushuaia + Punta Arenas region).",
 )
 
