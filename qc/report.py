@@ -41,9 +41,12 @@ def _json_safe(obj: Any) -> Any:
 class QCResult:
     """Single check outcome.
 
-    `passed` is advisory until the user reviews the baseline distribution.
-    Individual checks should still set passed honestly so that future
-    gating only requires flipping a switch.
+    `passed` records the honest pass/fail against the threshold.
+
+    `advisory=True` means the check is reported but does NOT gate the
+    overall run — useful when the threshold is still being calibrated or
+    when a known-buggy upstream (e.g. trimesh booleans) is producing false
+    failures that we want surfaced but not blocked on.
 
     `value` may be any JSON-serialisable type (number, bool, dict).
     `threshold` records what the check was compared against.
@@ -54,6 +57,7 @@ class QCResult:
     threshold: Any
     message: str
     error: Optional[str] = None  # populated on exceptions
+    advisory: bool = False       # if True, excluded from QCReport.all_passed
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -98,22 +102,31 @@ class QCReport:
     def add(self, result: QCResult) -> None:
         self.checks.append(result)
 
+    def add_child(self, child: "QCReport") -> None:
+        self.children.append(child)
+
     @property
     def all_passed(self) -> bool:
-        own = all(c.passed for c in self.checks)
+        # Advisory checks are reported but never gate the overall pass/fail
+        own = all(c.passed for c in self.checks if not c.advisory)
         kids = all(child.all_passed for child in self.children)
         return own and kids
 
     def summary_counts(self) -> Dict[str, int]:
-        passed = sum(1 for c in self.checks if c.passed and c.error is None)
-        failed = sum(1 for c in self.checks if not c.passed and c.error is None)
+        passed = sum(1 for c in self.checks
+                     if c.passed and c.error is None and not c.advisory)
+        failed = sum(1 for c in self.checks
+                     if not c.passed and c.error is None and not c.advisory)
+        advisory = sum(1 for c in self.checks if c.advisory)
         errored = sum(1 for c in self.checks if c.error is not None)
         for child in self.children:
             sub = child.summary_counts()
             passed += sub["passed"]
             failed += sub["failed"]
+            advisory += sub.get("advisory", 0)
             errored += sub["errored"]
-        return {"passed": passed, "failed": failed, "errored": errored}
+        return {"passed": passed, "failed": failed,
+                "advisory": advisory, "errored": errored}
 
     def to_dict(self) -> Dict[str, Any]:
         return {

@@ -1,39 +1,227 @@
 {
-  "Argentina": {"city": "Buenos Aires", "lon": -58.3816, "lat": -34.6037},
-  "Bolivia": {"city": "La Paz", "lon": -68.1193, "lat": -16.4897},
-  "Brazil": {"city": "Brasilia", "lon": -47.8825, "lat": -15.7942},
-  "Chile": {"city": "Santiago", "lon": -70.6693, "lat": -33.4489},
-  "Colombia": {"city": "Bogotá", "lon": -74.0721, "lat": 4.7110},
-  "Ecuador": {"city": "Quito", "lon": -78.4678, "lat": -0.1807},
-  "Guyana": {"city": "Georgetown", "lon": -58.1553, "lat": 6.8013},
-  "Paraguay": {"city": "Asunción", "lon": -57.5759, "lat": -25.2637},
-  "Peru": {"city": "Lima", "lon": -77.0428, "lat": -12.0464},
-  "Suriname": {"city": "Paramaribo", "lon": -55.2038, "lat": 5.8520},
-  "Uruguay": {"city": "Montevideo", "lon": -56.1645, "lat": -34.9011},
-  "Venezuela": {"city": "Caracas", "lon": -66.9036, "lat": 10.4806},
-  "French Guiana": {"city": "Cayenne", "lon": -52.3350, "lat": 4.9220},
-  "Turkey": {"city": "Ankara", "lon": 32.8597, "lat": 39.9334},
-  "Syria": {"city": "Damascus", "lon": 36.2765, "lat": 33.5138},
-  "Lebanon": {"city": "Beirut", "lon": 35.4951, "lat": 33.8886},
-  "Israel": {"city": "Jerusalem", "lon": 35.2137, "lat": 31.7683},
-  "Palestine": {"city": "Ramallah", "lon": 35.2063, "lat": 31.9038},
-  "Jordan": {"city": "Amman", "lon": 35.9239, "lat": 31.9539},
-  "Iraq": {"city": "Baghdad", "lon": 44.3661, "lat": 33.3152},
-  "Kuwait": {"city": "Kuwait City", "lon": 47.9774, "lat": 29.3759},
-  "Saudi Arabia": {"city": "Riyadh", "lon": 46.7219, "lat": 24.7136},
-  "Bahrain": {"city": "Manama", "lon": 50.5861, "lat": 26.2285},
-  "Qatar": {"city": "Doha", "lon": 51.5310, "lat": 25.2854},
-  "United Arab Emirates": {"city": "Abu Dhabi", "lon": 54.3773, "lat": 24.4539},
-  "Oman": {"city": "Muscat", "lon": 58.4059, "lat": 23.5880},
-  "Yemen": {"city": "Sanaa", "lon": 44.2075, "lat": 15.3694},
-  "Iran": {"city": "Tehran", "lon": 51.3890, "lat": 35.6892},
-  "Georgia": {"city": "Tbilisi", "lon": 44.8271, "lat": 41.7151},
-  "Armenia": {"city": "Yerevan", "lon": 44.5152, "lat": 40.1792},
-  "Azerbaijan": {"city": "Baku", "lon": 49.8671, "lat": 40.4093},
-  "Kazakhstan": {"city": "Astana", "lon": 71.4704, "lat": 51.1694},
-  "Uzbekistan": {"city": "Tashkent", "lon": 69.2401, "lat": 41.2995},
-  "Turkmenistan": {"city": "Ashgabat", "lon": 58.3260, "lat": 37.9601},
-  "Kyrgyzstan": {"city": "Bishkek", "lon": 74.5698, "lat": 42.8746},
-  "Tajikistan": {"city": "Dushanbe", "lon": 68.7870, "lat": 38.5598},
-  "Afghanistan": {"city": "Kabul", "lon": 69.2075, "lat": 34.5553}
+  "Afghanistan": {
+    "city": "Kabul",
+    "lat": 34.5553,
+    "lon": 69.2075
+  },
+  "Argentina": {
+    "city": "Buenos Aires",
+    "lat": -34.6037,
+    "lon": -58.3816
+  },
+  "Armenia": {
+    "city": "Yerevan",
+    "lat": 40.1792,
+    "lon": 44.5152
+  },
+  "Azerbaijan": {
+    "city": "Baku",
+    "lat": 40.4093,
+    "lon": 49.8671
+  },
+  "Bahrain": {
+    "city": "Manama",
+    "lat": 26.2285,
+    "lon": 50.5861
+  },
+  "Belgium": {
+    "city": "Brussels",
+    "lat": 50.8503,
+    "lon": 4.3517
+  },
+  "Bolivia": {
+    "city": "La Paz",
+    "lat": -16.4897,
+    "lon": -68.1193
+  },
+  "Brazil": {
+    "city": "Brasilia",
+    "lat": -15.7942,
+    "lon": -47.8825
+  },
+  "Chile": {
+    "city": "Santiago",
+    "lat": -33.4489,
+    "lon": -70.6693
+  },
+  "Colombia": {
+    "city": "Bogot\u00e1",
+    "lat": 4.711,
+    "lon": -74.0721
+  },
+  "Denmark": {
+    "city": "Copenhagen",
+    "lat": 55.6761,
+    "lon": 12.5683
+  },
+  "Ecuador": {
+    "city": "Quito",
+    "lat": -0.1807,
+    "lon": -78.4678
+  },
+  "Finland": {
+    "city": "Helsinki",
+    "lat": 60.1699,
+    "lon": 24.9384
+  },
+  "French Guiana": {
+    "city": "Cayenne",
+    "lat": 4.922,
+    "lon": -52.335
+  },
+  "Georgia": {
+    "city": "Tbilisi",
+    "lat": 41.7151,
+    "lon": 44.8271
+  },
+  "Guyana": {
+    "city": "Georgetown",
+    "lat": 6.8013,
+    "lon": -58.1553
+  },
+  "Iran": {
+    "city": "Tehran",
+    "lat": 35.6892,
+    "lon": 51.389
+  },
+  "Iraq": {
+    "city": "Baghdad",
+    "lat": 33.3152,
+    "lon": 44.3661
+  },
+  "Ireland": {
+    "city": "Dublin",
+    "lat": 53.3498,
+    "lon": -6.2603
+  },
+  "Israel": {
+    "city": "Jerusalem",
+    "lat": 31.7683,
+    "lon": 35.2137
+  },
+  "Jordan": {
+    "city": "Amman",
+    "lat": 31.9539,
+    "lon": 35.9239
+  },
+  "Kazakhstan": {
+    "city": "Astana",
+    "lat": 51.1694,
+    "lon": 71.4704
+  },
+  "Kuwait": {
+    "city": "Kuwait City",
+    "lat": 29.3759,
+    "lon": 47.9774
+  },
+  "Kyrgyzstan": {
+    "city": "Bishkek",
+    "lat": 42.8746,
+    "lon": 74.5698
+  },
+  "Lebanon": {
+    "city": "Beirut",
+    "lat": 33.8886,
+    "lon": 35.4951
+  },
+  "Netherlands": {
+    "city": "Amsterdam",
+    "lat": 52.3676,
+    "lon": 4.9041
+  },
+  "Norway": {
+    "city": "Oslo",
+    "lat": 59.9139,
+    "lon": 10.7522
+  },
+  "Oman": {
+    "city": "Muscat",
+    "lat": 23.588,
+    "lon": 58.4059
+  },
+  "Palestine": {
+    "city": "Ramallah",
+    "lat": 31.9038,
+    "lon": 35.2063
+  },
+  "Paraguay": {
+    "city": "Asunci\u00f3n",
+    "lat": -25.2637,
+    "lon": -57.5759
+  },
+  "Peru": {
+    "city": "Lima",
+    "lat": -12.0464,
+    "lon": -77.0428
+  },
+  "Qatar": {
+    "city": "Doha",
+    "lat": 25.2854,
+    "lon": 51.531
+  },
+  "Saudi Arabia": {
+    "city": "Riyadh",
+    "lat": 24.7136,
+    "lon": 46.7219
+  },
+  "Suriname": {
+    "city": "Paramaribo",
+    "lat": 5.852,
+    "lon": -55.2038
+  },
+  "Sweden": {
+    "city": "Stockholm",
+    "lat": 59.3293,
+    "lon": 18.0686
+  },
+  "Syria": {
+    "city": "Damascus",
+    "lat": 33.5138,
+    "lon": 36.2765
+  },
+  "Tajikistan": {
+    "city": "Dushanbe",
+    "lat": 38.5598,
+    "lon": 68.787
+  },
+  "Turkey": {
+    "city": "Ankara",
+    "lat": 39.9334,
+    "lon": 32.8597
+  },
+  "Turkmenistan": {
+    "city": "Ashgabat",
+    "lat": 37.9601,
+    "lon": 58.326
+  },
+  "United Arab Emirates": {
+    "city": "Abu Dhabi",
+    "lat": 24.4539,
+    "lon": 54.3773
+  },
+  "United Kingdom": {
+    "city": "London",
+    "lat": 51.5074,
+    "lon": -0.1278
+  },
+  "Uruguay": {
+    "city": "Montevideo",
+    "lat": -34.9011,
+    "lon": -56.1645
+  },
+  "Uzbekistan": {
+    "city": "Tashkent",
+    "lat": 41.2995,
+    "lon": 69.2401
+  },
+  "Venezuela": {
+    "city": "Caracas",
+    "lat": 10.4806,
+    "lon": -66.9036
+  },
+  "Yemen": {
+    "city": "Sanaa",
+    "lat": 15.3694,
+    "lon": 44.2075
+  }
 }

@@ -227,6 +227,13 @@ CAPITALS = {
     "Greece": ("Athens", 23.7275, 37.9838),
     "Iceland": ("Reykjavik", -21.9426, 64.1466),
     "Russia": ("Moscow", 37.6173, 55.7558),
+    "Ireland": ("Dublin", -6.2603, 53.3498),
+    "Denmark": ("Copenhagen", 12.5683, 55.6761),
+    "Norway": ("Oslo", 10.7522, 59.9139),
+    "Sweden": ("Stockholm", 18.0686, 59.3293),
+    "Finland": ("Helsinki", 24.9384, 60.1699),
+    "Netherlands": ("Amsterdam", 4.9041, 52.3676),
+    "Belgium": ("Brussels", 4.3517, 50.8503),
 }
 
 
@@ -1122,8 +1129,18 @@ def process_country(
     remove_lakes=False,
     min_lake_area_km2=MIN_LAKE_AREA_KM2,
     save_png=False,
+    bridge_polys_crs=None,
+    bridge_height_mm=1.5,
 ):
-    """Process a single country with vector clipping."""
+    """Process a single country with vector clipping.
+
+    Optional bridges: pass `bridge_polys_crs` as a list of shapely Polygons
+    (in dem_src.crs) describing low-elevation bridges that should be marked
+    in the DEM at -200m pre-smooth, then lowered to `bridge_height_mm` (below
+    BASE_THICKNESS_MM) after the vector clip. `country_geom` must already be
+    the merged (islands + attachment-zones + bridges) geometry; the driver is
+    responsible for constructing it.
+    """
     print(f"\nProcessing {country_name}...")
 
     # Validate DEM coverage first
@@ -1145,6 +1162,21 @@ def process_country(
     print("  Clipping DEM...")
     clipped_dem, transform = clip_dem_to_country(dem_src, country_geom)
     print(f"    DEM shape: {clipped_dem.shape}")
+
+    # Mark bridge zones at -200m BEFORE smoothing — they'll come out at
+    # BASE_THICKNESS_MM after solidify, then get lowered to bridge_height_mm
+    # after the vector clip below. Pattern ported from archive/scripts/
+    # reference/generate_denmark_connected.py.
+    if bridge_polys_crs:
+        from rasterio.mask import geometry_mask
+        print(f"  Marking {len(bridge_polys_crs)} bridge zone(s) in DEM at -200m...")
+        total_marked = 0
+        for bp in bridge_polys_crs:
+            mask = geometry_mask([bp], transform=transform, invert=True,
+                                 out_shape=clipped_dem.shape)
+            clipped_dem[mask] = -200.0
+            total_marked += int(mask.sum())
+        print(f"    Marked {total_marked} pixels")
 
     # Smooth
     print("  Smoothing mask and DEM...")
@@ -1174,6 +1206,35 @@ def process_country(
     print("  Clipping to vector boundary...")
     country_geom_mm = get_country_geom_in_mm(country_geom, transform, step)
     solid = clip_mesh_to_vector(solid, country_geom_mm)
+
+    # Lower bridge vertices from BASE_THICKNESS_MM (~2.0mm) to bridge_height_mm.
+    # Bridge zones were marked at -200m pre-smooth, so they came out at
+    # BASE_THICKNESS_MM after solidify. Selecting vertices in the bridge bbox
+    # at z ≈ BASE_THICKNESS_MM and pulling them down creates a visible-but-low
+    # bridge (paintable as ocean). Pattern from generate_denmark_connected.py.
+    if bridge_polys_crs:
+        from rasterio.transform import rowcol
+        print(f"  Lowering bridge vertices to {bridge_height_mm}mm...")
+        vertices = solid.vertices.copy()
+        total_lowered = 0
+        z_band = (BASE_THICKNESS_MM - 0.2, BASE_THICKNESS_MM + 0.2)
+        for bp in bridge_polys_crs:
+            minx, miny, maxx, maxy = bp.bounds
+            row_min, col_min = rowcol(transform, minx, maxy)
+            row_max, col_max = rowcol(transform, maxx, miny)
+            x_min = col_min * XY_MM_PER_PIXEL
+            x_max = (col_max + 1) * XY_MM_PER_PIXEL
+            y_min = row_min * XY_MM_PER_PIXEL
+            y_max = (row_max + 1) * XY_MM_PER_PIXEL
+            in_bridge = (
+                (vertices[:, 0] >= x_min) & (vertices[:, 0] <= x_max) &
+                (vertices[:, 1] >= y_min) & (vertices[:, 1] <= y_max) &
+                (vertices[:, 2] >= z_band[0]) & (vertices[:, 2] <= z_band[1])
+            )
+            vertices[in_bridge, 2] = bridge_height_mm
+            total_lowered += int(in_bridge.sum())
+        solid.vertices = vertices
+        print(f"    Lowered {total_lowered} vertices")
 
     # Simplify AFTER vector clip
     if target_faces is not None:

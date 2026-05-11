@@ -41,3 +41,4 @@ tileList.txt
 # Tile directories (large DEM files)
 caucasus_tiles/
 asia_tiles/
+STLs/
