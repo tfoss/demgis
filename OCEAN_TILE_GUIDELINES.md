@@ -109,8 +109,8 @@ performance):
 
 - Compute `dist = A_geom.distance(L_geom)` (in CRS / meters → km).
 - If `dist > max_distance_km`, skip.
-- If L is not a "large landmass" (below `min_neighbor_area_km²`, default
-  TBD ~10 000 km²), skip.
+- If L is not a "large landmass" (below `min_neighbor_area_km²`,
+  default `10_000.0`), skip.
 - Apply ownership rule. If A doesn't own the A↔L ocean, skip.
 
 The result: a set of neighbors A will extend toward.
@@ -131,7 +131,12 @@ For neighbor B:
 2. Determine the **near-side coast trace** on A: walk A's actual
    coastline from a₁ to a₂ along the side that faces B. (The convex
    hull was only used to find the angular bounds; the *actual* coast
-   replaces the hull edge in the final polygon.)
+   replaces the hull edge in the final polygon.) Concave features —
+   fjords, gulfs, bays — are **intentionally preserved** as ocean
+   (Greece's Thermaic Gulf, Norway's fjords): they are geometrically
+   ocean and should print as such. "Side facing B" is unambiguous: of
+   the two arcs the tangent points split A's boundary into, pick the
+   one with smaller mean distance to B.
 
 3. Determine the **far-side coast trace** on B: walk B's actual
    coastline from b₂ to b₁ along the side that faces A. Same idea.
@@ -212,6 +217,13 @@ class OceanExtension:
     # can't produce a satisfactory result.
     override_polygon: Optional["shapely.geometry.base.BaseGeometry"] = None
 
+    # Note: per-extension `height_mm` (present in the old bbox-based
+    # OceanExtension) is intentionally absent. Ocean slab height is a
+    # global aesthetic decision — divergent values across adjacent tiles
+    # would print as stepped slabs. Use a module-level constant
+    # `OCEAN_HEIGHT_MM = 1.5` matched to `Bridge.height_mm`'s default
+    # (`groups.py:42`) instead.
+
 
 @dataclass
 class NeighborOverride:
@@ -227,12 +239,23 @@ class NeighborOverride:
 Implemented as a one-time precompute the driver runs:
 
 ```python
+def is_landlocked(country_geom, world_ocean_geom) -> bool:
+    """True if no part of country_geom's boundary meets ocean.
+    Landlocked countries are skipped entirely — no halo, no
+    extensions, no neighbour-discovery query issued."""
+    ...
+
 def is_island_country(country_geom, all_other_countries) -> bool:
     """True if `country_geom` shares no land border with any other
     country (touches/intersects). Implies the country is one or more
     islands surrounded by water."""
     ...
 ```
+
+`is_landlocked` is the first gate — landlocked countries (~45 globally:
+Switzerland, Bolivia, Mongolia, Kazakhstan, etc.) exit the algorithm
+immediately. `is_island_country` is then used only for the remaining
+coastal countries (~205) to drive the ownership rule.
 
 Then for an A↔B pair:
 - If A is island, B is continental → A owns
@@ -272,13 +295,26 @@ configurations) can produce sectors that meet at central points.
 Algorithmically: each pair is computed independently and unioned. If
 the result is messy, fall back to override_polygon.
 
-**Archipelago countries (Indonesia, Philippines).** A country's
+**Countries whose hull is inflated by outlying islands (Indonesia,
+Philippines, Greece, UK with overseas territories).** A country's
 "land geometry" for the algorithm is the union of all its islands.
-Treating it as one entity means the convex hull might be enormous.
+Treating it as one entity means the convex hull might be enormous —
+and in cases like Greece↔Turkey, the inflated hull (Kastellorizo at
+~2 km from Turkey's coast extends Greece's hull east to ~29.6°E) can
+overlap the neighbour's hull, making outer common tangents undefined.
 Mitigation: per-group config could specify a primary landmass instead
-of the full country geometry, OR the algorithm can decompose
-archipelagos into sub-pieces by connected component above an area
-threshold. Decision deferred until we hit Indonesia.
+of the full country geometry, OR the algorithm can decompose into
+sub-pieces by connected component, using the **same**
+`CountryGroup.min_island_area_km2[member]` threshold that already
+governs STL inclusion (`groups.py:100`, applied at
+`make_country_group.py:211`). The rule: any island large enough to
+appear in the rendered STL participates as its own algorithmic entity
+(eligible to own/be-owned in an ownership pair); anything below
+threshold is third-party land subtracted via step 3.6. This avoids
+inventing a second area knob and guarantees the algorithm only
+"sees" landmasses that will actually print. Decision on whether to
+also expose a primary-landmass override is deferred until the first
+affected pilot (Greece or Indonesia, whichever comes first).
 
 **Continent-continent neighbors.** Spain-Morocco: both have land
 borders with other countries → both "continental" → no extension
@@ -295,7 +331,10 @@ outside the print extent (already handled in `resolve_capital`).
 
 ## Implementation order
 
-1. Implement `is_island_country` (a single NE preprocessing pass).
+1. Implement `is_landlocked` and `is_island_country` (single NE
+   preprocessing passes). Build an `STRtree` over all NE land polygons
+   at driver startup to support sub-second neighbour-discovery queries
+   for the ~205 coastal countries.
 2. Implement `find_outer_tangents(hull_a, hull_b)` — geometric primitive.
 3. Implement `trace_coast_between(geom, a, b, side)` — walks a polygon's
    boundary from point `a` to point `b` along the indicated side.
@@ -312,14 +351,12 @@ outside the print extent (already handled in `resolve_capital`).
 
 ## TODOs
 
-- Performance: at 1000 km threshold each country needs to compare
-  against all NE land within ~10° latitude/longitude. Probably build a
-  spatial index (R-tree) of NE polygons once at startup.
-- Symmetry check: for printing, the OTHER tile (the continental one)
-  needs to know to stop its coastline EXACTLY where the island's ocean
-  extension ends. Currently the continental tile is rendered with its
-  natural coast — alignment depends on the EE projection being globally
-  consistent (which it is, post-2026-05-10 fix).
+- Symmetry check between island ocean extension and continental
+  neighbour coastline — tracked as the `seam_consistency` QC in
+  `MIGRATION_PLAN_DRAFT.md §5d`. Relies on the EE projection being
+  globally consistent (which it is, post-2026-05-10 fix) and on
+  shared NE source + identical `VECTOR_SIMPLIFY_DEGREES` across both
+  pieces.
 - Archipelago decomposition strategy for Indonesia/Philippines — pin
   this when we get there.
 - Visual QC: add a per-group overlay showing both members' ocean

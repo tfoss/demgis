@@ -189,6 +189,58 @@ Each file in `GOLD_STLs/<region>/<country>.stl` gets a sibling `<country>.qc.jso
 ```
 A `verify-gold` command walks the directory and re-runs QC; flags anything whose STL md5 has drifted from its recorded provenance.
 
+## 5. Ocean tiles — when and how
+
+Several countries don't print well as raw clipped land: islands have nothing to register against on the bed, and adjacent-country pairs (Japan↔Korea, Cuba↔USA, Sri Lanka↔India) need a defined seam interface. Today the patterns are scattered but real: `generate_oceania_with_ocean.py` already coastline-buffers Australia/NZ/PNG and subtracts neighbour STL footprints to arbitrate seams; `generate_malaysia_borneo_with_ocean_v11.py` hand-traces the SCS polygon; `generate_indonesia_shared_origin.py` patches mm-level alignment; the active `make_country_group.py` / `groups.py` driver supports a bbox-based `OceanExtension`. The unification work is **consolidation**, not greenfield.
+
+**The full design spec is `OCEAN_TILE_GUIDELINES.md`** (committed 2026-05-12). This section summarises and slots it into the migration phasing; do not duplicate the algorithm or schema here.
+
+### 5a. When ocean is generated (per the guidelines)
+
+Every country tile gets a constant **buffer halo** (default 50 km) around all its coasts — this gives even isolated islands a registration margin and removes "is ocean needed?" from being a per-country decision. On top of the halo, **extensions** are generated toward nearby landmasses subject to an **ownership rule**:
+
+- Non-continental ↔ continental → the non-continental side owns the extension (Japan owns the Japan-Korea ocean; Cuba owns Cuba-USA; Sri Lanka owns Sri Lanka-India).
+- Island ↔ island → the larger by area owns.
+- Continental ↔ continental → no extension; buffer halo only.
+
+"Continental" = has a land border with at least one other NE country. The rule makes ownership unambiguous per pair without per-relationship config and resolves the seam-arbitration gap flagged by the second-agent review (who carves whom when two ocean tiles meet).
+
+### 5b. Schema and algorithm — see `OCEAN_TILE_GUIDELINES.md`
+
+The current `OceanExtension(bbox=...)` in `groups.py:63` is bbox-only; the guidelines replace it with an `OceanExtension` carrying `buffer_km`, `max_distance_km`, `min_neighbor_area_km2`, `auto_discover_neighbors`, `explicit_neighbors`, `exclude_neighbors`, `per_neighbor` overrides, and an `override_polygon` last-resort escape hatch. The algorithm (convex-hull outer tangents → coastline tracing between tangent points → union with halo) lives in `OCEAN_TILE_GUIDELINES.md §Algorithm`.
+
+Two reviewer concerns are resolved by the guidelines as written:
+- **Hand-traced SCS-style polygons**: the `override_polygon` field is the explicit escape hatch.
+- **Seam arbitration between two ocean tiles**: the ownership rule decides per pair; no `subtract_neighbours:` field needed.
+
+**Intentional simplification:** the per-extension `height_mm` field (`groups.py:80`, currently `1.5` everywhere with no overrides) is dropped from the new schema and promoted to a module-level `OCEAN_HEIGHT_MM = 1.5`, matched to the existing `Bridge.height_mm` default. Ocean height is a global aesthetic decision, not a per-country knob — divergent values would print as visibly stepped slabs across adjacent tiles. No behaviour change today (no caller overrides the default); locking it global prevents future drift.
+
+One reviewer concern remains open and must be tracked in E2:
+- **Dependency ordering** between an island and its continental neighbour. The continental tile's natural coastline must terminate exactly where the island's ocean extension ends. The guidelines say this currently depends on the EE projection being globally consistent (post-2026-05-10 fix) — which it is — but it has not been stress-tested. If a continental tile regenerates with a polygon-simplification drift, its island neighbour's ocean stops mid-air. Add a `seam_consistency` QC check (see 5d).
+
+### 5c. Pilot countries (revised order)
+
+The guidelines' implementation order (steps 7–9 of `OCEAN_TILE_GUIDELINES.md §Implementation order`) is the canonical sequence; pilots map onto it in increasing complexity:
+
+1. **Japan + Korea** (guidelines step 7) — the existing `KOREA_JAPAN` group already has an `OceanExtension(bbox=...)` instance; migrating it is the smallest possible schema change. Single ownership pair (Japan ↔ Korea). Doubles as a **regression test** against the existing physical print: the new algorithm must reproduce a comparable footprint or we know the algorithm is wrong before we go further.
+2. **Sri Lanka** — the genuinely simplest *algorithmic* pilot: one ownership pair (SL ↔ India), smooth-ish coast on both sides, no archipelago effects, no print to regress against. Clean test of the algorithm in isolation.
+3. **Great Britain** — first **multi-neighbour** pilot. GB ↔ France across the Channel (~33 km), GB ↔ Belgium/Netherlands across the southern North Sea, and GB ↔ Ireland across the Irish Sea (island↔island, GB is larger → GB owns). Exercises the sector-union behaviour from `OCEAN_TILE_GUIDELINES.md §Edge cases` for the first time. Critically: NOT a "halo in isolation" case.
+4. **Cuba + Caribbean** (not yet a group) — exercises island↔continental (Cuba↔USA, Cuba↔Mexico) and island↔island (Cuba↔Jamaica, Cuba↔Hispaniola) within one group. First three-way-junction stress test.
+5. **Indonesia / Malaysia / PNG** — archipelago decomposition is **explicitly deferred in the guidelines** ("Decision deferred until we hit the first affected pilot"). This pilot must wait until Phase C (LCC migration) lands, because the shared-origin question (§3) is also unresolved until then.
+
+Note on §3↔§5 shared-origin coupling: §3 hypothesises LCC obsoletes the shared-origin patch. The guidelines' algorithm doesn't depend on shared-origin at all (it operates in WGS84 polygons before any CRS-specific work). If LCC works, the patch goes away. If LCC is marginal, the patch stays but at the *driver* level, not in the ocean schema.
+
+### 5d. QC for ocean tiles
+
+Layered on §4 — these checks gate the new ocean tile pipeline:
+- `seam_consistency` — for **each** island↔continental neighbour pair, the corresponding sector polygon's far-side boundary and that continental tile's clipped coastline agree within 0.2 mm in print mm-space. Runs per pair, so a multi-neighbour pilot like Great Britain produces four independent checks (GB↔France, GB↔Belgium, GB↔NL, plus the island↔island GB↔Ireland). **Measured on the vector polygons before rasterization**, not against the DEM grid: shared NE source + identical `VECTOR_SIMPLIFY_DEGREES` guarantees vertex-level agreement, so 0.2 mm (~0.6 m in CRS at `GLOBAL_XY_SCALE=0.33`) is testing processing consistency, not sub-pixel DEM precision. Catches the failure mode where one piece is regenerated with a different simplification value or routed through a different CRS chain than its neighbour — those manifest as 10s–100s of mm of drift, well above threshold. Loosen later only if real processing variation forces it.
+- `ownership_unique` — for every landmass pair in a group, exactly one side has an `OceanExtension` toward the other. No double-owned, no orphan seams.
+- `halo_present` — `buffer_km` halo geometry exists in every tile's clipped vector. Catches accidental empty-halo regressions.
+- `extension_no_disconnected_slivers` — the per-pair sector polygon has a single connected component (the no-stripes rule from `OCEAN_TILE_GUIDELINES.md §Principles`).
+- `override_polygon_provenance` — when a member uses `override_polygon`, its qc.json records the polygon's vertex count and SHA so regressions are obvious.
+
+`extent_within_print_bed` from §4 covers both ocean and land tiles — no separate ocean-specific check needed.
+
 ---
 
 ## Phasing
@@ -200,6 +252,7 @@ A `verify-gold` command walks the directory and re-runs QC; flags anything whose
 | **C. Projection pilot (LCC)** | Switch one zone (SE Asia recommended) to LCC. Re-run, measure border gaps, compare to AEA baseline. | Medium — needs print test for scale calibration. | 1 day code + 1 day print verification |
 | **D. Global LCC migration** | Apply LCC to all zones. Regenerate all STLs. Run QC matrix. | Medium — slow compute (days), but pipeline is unchanged. | 3–5 days mostly compute |
 | **E. Coverage closeout** | Build NCA, Caribbean, Pacific, Greenland, Antarctica zones. Each is a `zones.yaml` entry + a tile download + a build run. | Low per zone — well-trodden path. | 1–2 days per zone |
+| **E2. Ocean-tile unification (§5, spec in `OCEAN_TILE_GUIDELINES.md`)** | Implement the algorithm in `groups.py` / `make_country_group.py`: `is_landlocked` + `is_island_country` precomputes, STRtree over NE land for neighbour discovery, `find_outer_tangents`, `trace_coast_between`, `build_sector_polygon`, `compute_ocean_extension`. Replace bbox-based `OceanExtension`. Pilot order: Japan+Korea (port existing group) → Sri Lanka → Great Britain → Cuba+Caribbean → Indonesia/Malaysia/PNG (deferred until Phase C lands). Retire `generate_*_with_ocean*.py` afterwards. | Medium — outer-tangent + coastline-tracing geometry primitives are non-trivial; seam-consistency QC is novel. Indonesia pilot blocked on Phase C. | 3.5 days framework (incl. ½ day for landlocked filter + STRtree spatial index — load-bearing, not optional) + 1–2 days per pilot × 4 pilots + 1 day QC = 8.5–12.5 days for steps 1–4; step 5 sequenced after Phase C. |
 | **F. Cleanup** | Delete the ~150 dead `STLs_*` dirs (after confirming nothing in `GOLD_STLs` depends on them). Archive the 17 design docs into `docs/history/`. Tighten CLAUDE.md to point at the new entry points. | Low. | half day |
 
 Total: ~3 weeks of focused work to get to a clean, generic, all-country creator with automated QC, ignoring print-test wall-clock for the pilot.
