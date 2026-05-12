@@ -60,6 +60,28 @@ class SharedOrigin:
 
 
 @dataclass
+class OceanExtension:
+    """Extend a member's printed tile to include surrounding ocean so it
+    aligns physically with neighbor tiles when laid side by side.
+
+    The bbox area inside this extension (minus all NE land within the
+    bbox — so other countries' islands don't get accidentally rendered as
+    ocean) becomes low-elevation mesh at `height_mm`, produced via the same
+    DEM-marking + vertex-lowering mechanism Denmark uses for bridges.
+    Bridges and ocean extensions can coexist on a single member.
+
+    Example: Japan extending west across the Sea of Japan so it abuts
+    Korea's east coast when both pieces are placed adjacent on a tray.
+
+        OceanExtension(bbox=(127, 33, 132, 42),
+                       label="Sea of Japan registration")
+    """
+    bbox: tuple[float, float, float, float]   # WGS84 minx, miny, maxx, maxy
+    height_mm: float = 1.5
+    label: str = ""
+
+
+@dataclass
 class CountryGroup:
     """One printable country-group."""
     name: str                                # used for output dir + qc subject
@@ -80,6 +102,10 @@ class CountryGroup:
     # sub-region of a country (Tierra del Fuego = (-76, -56, -63, -52) of both
     # Argentina and Chile). Missing key = no clip.
     wgs84_bbox: dict[str, tuple[float, float, float, float]] = field(default_factory=dict)
+    # Per-member ocean-extension list. Each extension adds a low-elevation
+    # rectangle of ocean to the member's tile so the printed piece aligns
+    # with neighbors physically. See OceanExtension above.
+    ocean_extensions: dict[str, list[OceanExtension]] = field(default_factory=dict)
     # Per-member override of the canonical capital. Tuple is (city, lon, lat).
     # Used for sub-region groups where the country's actual capital is outside
     # the wgs84_bbox clip (e.g. Tierra del Fuego: Argentina's Buenos Aires is
@@ -146,9 +172,33 @@ TIERRA_DEL_FUEGO = CountryGroup(
 )
 
 
+KOREA_JAPAN = CountryGroup(
+    name="Korea_Japan",
+    members=["South Korea", "Japan"],
+    # Japan's tile extends west across the Sea of Japan so the printed
+    # piece carries the registration ocean. South Korea is rendered at its
+    # native footprint and snaps against Japan's western shoulder.
+    # Bbox covers Sea of Japan: 127°E (Korean east coast) to 132°E (Japan's
+    # west coast), 33°N (Kyushu) to 42°N (Hokkaido). all-NE-land subtraction
+    # in the driver ensures Korean coastlines and Japan's own islands
+    # inside the bbox stay as land, not ocean.
+    ocean_extensions={
+        "Japan": [
+            OceanExtension(
+                bbox=(127.0, 33.0, 132.0, 42.0),
+                label="Sea of Japan registration",
+            ),
+        ],
+    },
+    notes="Test for the ocean-extension mechanism. Japan owns the Sea of "
+          "Japan registration surface; Korea snaps to its west.",
+)
+
+
 # Registry: command-line `--group NAME` looks this up.
 GROUPS: dict[str, CountryGroup] = {
     "UK_Ireland":       UK_IRELAND,
     "Denmark":          DENMARK,
     "Tierra_del_Fuego": TIERRA_DEL_FUEGO,
+    "Korea_Japan":      KOREA_JAPAN,
 }

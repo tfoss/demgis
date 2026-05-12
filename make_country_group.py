@@ -34,7 +34,7 @@ from shapely.validation import make_valid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import make_all_sa_with_vector_clip as pipe
-from groups import GROUPS, Bridge, CountryGroup
+from groups import GROUPS, Bridge, CountryGroup, OceanExtension
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,25 @@ def sorted_sub_polygons(geom) -> list[Polygon]:
     polys = list(geom.geoms)
     polys.sort(key=polygon_area_km2, reverse=True)
     return polys
+
+
+def build_ocean_polygon(extension: OceanExtension, ne_df: gpd.GeoDataFrame):
+    """Construct an ocean polygon = bbox minus all NE land within the bbox.
+
+    Returned geometry is in WGS84. The subtraction is critical: without it,
+    other countries' coastlines / islands inside the bbox would get marked
+    as ocean (dropped to -200m pre-smooth) and end up as a low slab in the
+    final mesh — losing real terrain.
+    """
+    bbox_poly = box(*extension.bbox)
+    intersecting = ne_df[ne_df.geometry.intersects(bbox_poly)]
+    if intersecting.empty:
+        return bbox_poly
+    land = unary_union(intersecting.geometry)
+    ocean = bbox_poly.difference(land)
+    if not ocean.is_valid:
+        ocean = make_valid(ocean)
+    return ocean
 
 
 def construct_bridges(
@@ -239,8 +258,12 @@ def resolve_capital(
 
 def patched_process_country(country_name, group: CountryGroup, *args, **kwargs):
     """Wrap process_country so coverage-check failures for COVERAGE_EXEMPT
-    members don't abort the run."""
-    if country_name in group.coverage_exempt:
+    members — or members with ocean extensions, since their geom includes
+    open-water bbox area which the DEM legitimately has as nodata — don't
+    abort the run."""
+    is_exempt = (country_name in group.coverage_exempt
+                 or country_name in group.ocean_extensions)
+    if is_exempt:
         original = pipe.validate_dem_coverage
         def lenient(*a, **k):
             ok, pct, msg = original(*a, **k)
@@ -491,6 +514,33 @@ def main():
             member_wgs84, group.bridges
         )
 
+    # 2b. Apply ocean extensions. For each member with extensions: compute
+    #     ocean polygon (bbox minus all NE land in bbox), union with member's
+    #     geometry (so the DEM clip + vector clip cover the ocean area), and
+    #     track per-member for downstream bridge_polys_crs propagation.
+    ocean_polys_wgs84_by_member: dict[str, list] = {m: [] for m in group.members}
+    if group.ocean_extensions:
+        print(f"\nConstructing ocean extensions...")
+        for member, extensions in group.ocean_extensions.items():
+            if member not in member_wgs84:
+                print(f"  WARNING: ocean_extension for unknown member {member}")
+                continue
+            for ext in extensions:
+                ocean = build_ocean_polygon(ext, ne)
+                if ocean.is_empty:
+                    print(f"    {member}: {ext.label or ext.bbox} — empty ocean (all land)")
+                    continue
+                ocean_polys_wgs84_by_member[member].append(ocean)
+                # Union into member geom so vector clip includes the ocean
+                merged = unary_union([member_wgs84[member], ocean])
+                if not merged.is_valid:
+                    merged = make_valid(merged)
+                member_wgs84[member] = merged
+                area_km2 = polygon_area_km2(ocean) if ocean.geom_type == "Polygon" else \
+                           sum(polygon_area_km2(p) for p in ocean.geoms)
+                print(f"    {member}: {ext.label or ext.bbox} — "
+                      f"{area_km2:,.0f} km² ocean area added")
+
     # 3. Reproject everything to DEM CRS
     print(f"\nReprojecting to DEM CRS...")
     member_proj = {m: reproject_to_dem_crs(g, dem.crs)
@@ -499,6 +549,11 @@ def main():
     for bridge, bp_wgs in zip(group.bridges, bridge_polys_wgs84):
         bp_crs = reproject_to_dem_crs(bp_wgs, dem.crs)
         bridge_polys_crs_by_member.setdefault(bridge.a_member, []).append(bp_crs)
+    # Ocean extensions reuse the same marking + lowering machinery as bridges.
+    for member, ocean_polys in ocean_polys_wgs84_by_member.items():
+        for op in ocean_polys:
+            op_crs = reproject_to_dem_crs(op, dem.crs)
+            bridge_polys_crs_by_member.setdefault(member, []).append(op_crs)
 
     # 4. Render each member.
     # Resolve effective capital per member (regional override → default →

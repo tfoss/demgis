@@ -950,7 +950,45 @@ def clip_mesh_to_vector(solid, country_geom_mm):
             )
 
             if not cutter.is_volume:
-                print(f"    WARNING: Cutter {i} is not a volume, skipping")
+                # Fallback 1: clean topology with buffer/unbuffer. Complex
+                # polygons (e.g. country merged with an ocean-extension bbox
+                # that has interior holes from the Inland Sea / coastline
+                # detail) often fail to extrude as a watertight volume.
+                # A small buffer-unbuffer collapses degenerate features
+                # and frequently produces a cleaner shape.
+                print(f"    Cutter {i} not a volume — retrying with buffer cleanup...")
+                try:
+                    cleaned = poly.buffer(0.05).buffer(-0.05)
+                    if not cleaned.is_valid:
+                        cleaned = make_valid(cleaned)
+                    if hasattr(cleaned, "exterior") and len(cleaned.exterior.coords) >= 10:
+                        cutter2 = robust_extrude_polygon(cleaned, height)
+                        cutter2.apply_translation([0, 0, zmin - 1.0])
+                        if cutter2.is_volume:
+                            print(f"      buffer cleanup → volume cutter "
+                                  f"({len(cutter2.faces)} faces)")
+                            cutters.append(cutter2)
+                            continue
+                except Exception as e:
+                    print(f"      buffer cleanup raised: {e}")
+                # Fallback 2: convex hull. Over-cuts at the boundary but
+                # since the surface mesh is already bounded by the smoothed
+                # mask, this preserves every face that should survive.
+                # Strictly better than dropping the cutter entirely (which
+                # removes all the mesh content inside the polygon).
+                print(f"    Cutter {i} fallback: convex hull")
+                try:
+                    hull = poly.convex_hull
+                    cutter3 = robust_extrude_polygon(hull, height)
+                    cutter3.apply_translation([0, 0, zmin - 1.0])
+                    if cutter3.is_volume:
+                        print(f"      convex hull cutter "
+                              f"({len(cutter3.faces)} faces)")
+                        cutters.append(cutter3)
+                        continue
+                except Exception as e:
+                    print(f"      convex hull raised: {e}")
+                print(f"    WARNING: Cutter {i} could not be repaired, skipping")
                 continue
 
             cutters.append(cutter)
