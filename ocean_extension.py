@@ -560,6 +560,48 @@ def compute_ocean_extension(
             )
             b_subs = _decompose_by_area(B_full, cand_min)
 
+            # Relevance clip on sub-polygons. The discovery step filters
+            # whole countries by max_distance_km, but post-decomposition
+            # we have two failure modes:
+            #   1. A far-flung sub-polygon (Russia's Kaliningrad, ~7000
+            #      km from Japan) passing the decomposition threshold —
+            #      builds a sector polygon spanning half the globe.
+            #   2. A huge mainland sub-polygon (Russia mainland, China
+            #      mainland) whose NEAREST point is within max_distance
+            #      of A but whose FAR edge is thousands of km away — its
+            #      convex hull stretches from coast to far interior, and
+            #      tangent lines from A's hull form an enormous sector.
+            # Both fixed by intersecting each b_sub with a relevance disc
+            # of radius max_distance_km around A. The clipped sub then
+            # contains only the portion of B within range, and tangent
+            # search produces a sensibly-bounded sector.
+            per_nb = (ext.per_neighbor.get(cand)
+                      if ext.per_neighbor else None)
+            pair_max_km = (per_nb.max_distance_km
+                           if per_nb and per_nb.max_distance_km is not None
+                           else ext.max_distance_km)
+            pair_max_m = pair_max_km * 1000.0
+            relevance_disc = A_full.buffer(pair_max_m)
+            clipped_subs: list[Polygon] = []
+            for sub in b_subs:
+                clipped = sub.intersection(relevance_disc)
+                if clipped.is_empty:
+                    continue
+                if not clipped.is_valid:
+                    clipped = make_valid(clipped)
+                # `intersection` may return Polygon / MultiPolygon /
+                # GeometryCollection (with lines from the disc grazing
+                # the polygon edge). Keep only Polygon components.
+                for part in _components(clipped):
+                    # Drop fragments below the decomposition threshold
+                    # so we don't pollute the tangent search with tiny
+                    # slivers from the disc boundary.
+                    if _polygon_area_km2_ee(part) >= cand_min:
+                        clipped_subs.append(part)
+            b_subs = clipped_subs
+            if not b_subs:
+                continue
+
             # Per-neighbor clamp bbox (WGS84) -> EE polygon.
             clamp_poly_ee: Optional[BaseGeometry] = None
             per = (ext.per_neighbor or {}).get(cand)
