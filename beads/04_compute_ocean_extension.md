@@ -16,9 +16,10 @@ Beads 01–03 produce the building blocks: 01 supplies `is_landlocked` / `is_isl
 
 ## Deliverables
 
-1. `compute_ocean_extension(member, group, all_ne, precomputes) -> shapely geometry` (Equal Earth, possibly multi-polygon, possibly empty), located in `groups.py` or a sibling `ocean.py` per bead 03.
-2. Patch `make_country_group.py`: replace the `build_ocean_polygon` call site (~line 529) with `compute_ocean_extension`; preserve `bridge_polys_crs_by_member` propagation that triggers the -200m DEM mark + 1.5mm vertex-lowering.
-3. Retire `build_ocean_polygon` once no caller remains.
+1. `compute_ocean_extension(member, group, all_ne, precomputes) -> shapely geometry` (Equal Earth `EPSG:8857`, possibly multi-polygon, possibly empty), located in `groups.py` or a sibling `ocean.py` per bead 03.
+2. **Multi-part input decomposition before tangent search.** Both `A_geom` and each candidate `B_geom` must be decomposed into connected components whose individual area ≥ `CountryGroup.min_island_area_km2[member]` (per the existing per-member dict at `groups.py:100`) BEFORE being handed to `build_sector_polygon`. Without this, Japan (109 NE parts) produces a 4-vertex degenerate sector — bead 02 verified that feeding Honshu-only + Korea-mainland-only produces the correct 1,614-vertex Tsushima-Strait-tracing polygon. This is also what resolves the Sri Lanka ↔ India hull-overlap case (bead 07): the full NE polygons overlap, but their largest-component sub-polygons do not. The decomposition also handles the UK "continental" classification (bead 08): the GB sub-polygon is an island even though the full UK polygon shares the NI/Ireland border.
+3. Patch `make_country_group.py`: replace the `build_ocean_polygon` call site (~line 529) with `compute_ocean_extension`; preserve `bridge_polys_crs_by_member` propagation that triggers the -200m DEM mark + 1.5mm vertex-lowering.
+4. Retire `build_ocean_polygon` once no caller remains.
 
 ## Acceptance criteria
 
@@ -28,6 +29,7 @@ Beads 01–03 produce the building blocks: 01 supplies `is_landlocked` / `is_isl
 4. `auto_discover_neighbors=False` confines sectors to `explicit_neighbors`; `exclude_neighbors` removes otherwise-discovered candidates; `per_neighbor[name].max_distance_km` / `.clamp_bbox` override globals for that pair only.
 5. After subtracting A's land and third-party NE land, the returned polygon's intersection with any NE land polygon has zero area (within float tolerance).
 6. Japan+Korea regression: on the migrated `KOREA_JAPAN` group (bead 06) the footprint is visually comparable to the existing bbox-based STL — numeric threshold per bead 05.
+7. **Decomposition correctness:** Japan-Korea sector polygon has ≥1,000 vertices on its A-side trace (i.e. real Honshu coast, not a straight-line fallback). Sri Lanka-India does not raise `HullsOverlapError` once the algorithm operates on the largest sub-polygon of each.
 
 ## Dependencies
 
@@ -39,9 +41,11 @@ QC checks (`seam_consistency`, `ownership_unique`, `halo_present`, `extension_no
 
 ## CRS decision (resolved)
 
-**The algorithm runs in Equal Earth throughout.** NE polygons are reprojected from WGS84 to EE once at driver startup (in bead 01, before the STRtree is built); all distance, buffer, hull, tangent, and tracing operations in beads 02 + 04 operate on EE geometries; the orchestrator returns an EE polygon. The existing `bridge_polys_crs_by_member` mechanism already consumes per-CRS polygons, so this slots in without a new pipeline path.
+**The algorithm runs in Equal Earth (`EPSG:8857`) throughout.** NE polygons are reprojected from WGS84 to EE once at driver startup (in bead 01, before the STRtree is built); all distance, buffer, hull, tangent, and tracing operations in beads 02 + 04 operate on EE geometries; the orchestrator returns an EE polygon. The existing `bridge_polys_crs_by_member` mechanism already consumes per-CRS polygons, so this slots in without a new pipeline path.
 
 Rationale: `buffer_km` and `max_distance_km` require a meter-based CRS; EE is global (handles cross-region pairs without zone-stitching) and is the project's target STL CRS, so no second reprojection is needed at handoff. EE's equal-area-not-conformal distortion (~few % at country scale) is well within the algorithm's threshold-heuristic tolerance.
+
+CRS-code correction: earlier drafts (and the original §5b text) referenced `ESRI:54052`. In pyproj that code resolves to `World_Goode_Homolosine_Land`, not Equal Earth. The correct EPSG code is `EPSG:8857`, verified during bead 01's implementation against the existing `pilot_2km_eqearth.tif`.
 
 ## Open questions
 

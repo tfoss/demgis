@@ -20,7 +20,7 @@ Phase E2 of `MIGRATION_PLAN_DRAFT.md` replaces the bbox-based `OceanExtension` i
 ## Deliverables
 
 - A new module `ocean_precompute.py` at repo root (sibling to `groups.py`; ocean-tile geometry primitives in beads 02–04 will join it — keeps `groups.py` purely declarative).
-- `reproject_ne_to_ee(ne_gdf) -> GeoDataFrame` — reproject Natural Earth (WGS84) to Equal Earth (`ESRI:54052`) once at driver startup. **All downstream ocean-tile geometry (beads 02 + 04) operates on the EE-projected polygons** — see bead 04's CRS decision section for the rationale.
+- `reproject_ne_to_ee(ne_gdf) -> GeoDataFrame` — reproject Natural Earth (WGS84) to Equal Earth (`EPSG:8857`) once at driver startup. **All downstream ocean-tile geometry (beads 02 + 04) operates on the EE-projected polygons** — see bead 04's CRS decision section for the rationale. (Earlier drafts referenced `ESRI:54052`; in pyproj that code resolves to `World_Goode_Homolosine_Land`, not Equal Earth. The correct EPSG code is `EPSG:8857`, verified against the existing `pilot_2km_eqearth.tif`.)
 - `is_landlocked(country_geom, world_ocean_geom) -> bool` and `is_island_country(country_geom, all_other_countries_geoms) -> bool` per the spec — predicate semantics are CRS-agnostic (touches/intersects), but the inputs are the EE-projected geometries for consistency with the rest of the pipeline.
 - `build_land_strtree(ne_ee_gdf) -> tuple[STRtree, list[str]]` built over the EE polygons, returning the tree plus a parallel ADMIN-name list (STRtree's `.query()` returns indices in shapely 2.x).
 - `precompute_country_classes(ne_ee_gdf) -> dict[str, Literal["landlocked", "island", "continental"]]` — single pass that calls the two predicates and returns a lookup for every NE ADMIN row.

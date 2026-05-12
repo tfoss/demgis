@@ -20,7 +20,7 @@ This is the meatiest geometric stage of the algorithm: convert "A owns ocean tow
   - `build_sector_polygon(A_geom, B_geom) -> Polygon` — wires the above into guidelines step 3 (1)–(4); returns the closed sector polygon before any land subtraction (steps 3.5 / 3.6 are the orchestrator's job, bead 04).
 - Tests under `tests/test_ocean_geom.py`:
   - Disjoint circular hulls placed N/S: tangents are horizontal-ish, contact points symmetric.
-  - Japan + Korea EE polygons (load from NE shapefile, reproject to Equal Earth `ESRI:54052`): two tangents found, sector polygon contains the Sea of Japan, excludes the Pacific side.
+  - Japan + Korea EE polygons (load from NE shapefile, reproject to Equal Earth `EPSG:8857`): two tangents found, sector polygon contains the Sea of Japan, excludes the Pacific side.
   - Sri Lanka + India: clean one-pair case, sector contains the Palk Strait.
   - Greece + Turkey (overlapping hulls via Kastellorizo): `find_outer_tangents` raises `HullsOverlapError`.
   - Coast-trace selects the correct arc for a U-shaped polygon where naive "shorter arc" would pick the wrong side.
