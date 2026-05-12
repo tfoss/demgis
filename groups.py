@@ -16,11 +16,40 @@ Adding a new group = add a CountryGroup instance at the bottom of this file
 and a one-line registration in `GROUPS`. Names listed in `members` MUST match
 Natural Earth's ADMIN column verbatim (see feedback_ne_admin_names.md for the
 silent-mismatch trap).
+
+Schema migration note (bead 03):
+    `OceanExtension` was previously a hand-authored bbox (`bbox=(minx, miny,
+    maxx, maxy)`, `height_mm=1.5`). It is now the field-based schema from
+    `OCEAN_TILE_GUIDELINES.md §Schema` — buffer/distance/area knobs plus
+    optional explicit_neighbors / per_neighbor overrides — with the actual
+    polygon computed by the algorithm landing in bead 04. Per-extension
+    `height_mm` is gone; ocean slab height is now the module-level
+    `OCEAN_HEIGHT_MM` constant below, matched to `Bridge.height_mm` so adjacent
+    tiles don't print as stepped slabs.
+
+    Compatibility choice (Option A — hard-break, no shim): the old `bbox`
+    field is not re-exposed. The driver's `build_ocean_polygon` at
+    `make_country_group.py:73` still reads `extension.bbox` and will break at
+    runtime for groups with `ocean_extensions` — but bead 04 replaces that
+    consumer wholesale, and the only group using `ocean_extensions` today
+    (`KOREA_JAPAN`) is explicitly out of scope for this bead's acceptance
+    criteria (Denmark + UK_Ireland must remain byte-identical; they don't use
+    ocean extensions, so they're unaffected). `import make_country_group`
+    still succeeds because `from __future__ import annotations` makes the
+    type hint at the driver's line 73 a string at runtime.
 """
 
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+# Ocean-extension slab height (mm). Module-level so all tiles use the same
+# value: divergent per-extension heights would print as visible stepped slabs
+# across adjacent tray pieces. Kept in lock-step with `Bridge.height_mm`'s
+# default below (line ~42) — the same DEM-marking + vertex-lowering machinery
+# handles both bridges and ocean extensions.
+OCEAN_HEIGHT_MM: float = 1.5
 
 
 @dataclass
@@ -60,25 +89,76 @@ class SharedOrigin:
 
 
 @dataclass
-class OceanExtension:
-    """Extend a member's printed tile to include surrounding ocean so it
-    aligns physically with neighbor tiles when laid side by side.
+class NeighborOverride:
+    """Per-pair tuning for the ocean-extension algorithm when the global
+    parameters on `OceanExtension` need adjustment for a specific neighbor.
 
-    The bbox area inside this extension (minus all NE land within the
-    bbox — so other countries' islands don't get accidentally rendered as
-    ocean) becomes low-elevation mesh at `height_mm`, produced via the same
-    DEM-marking + vertex-lowering mechanism Denmark uses for bridges.
-    Bridges and ocean extensions can coexist on a single member.
-
-    Example: Japan extending west across the Sea of Japan so it abuts
-    Korea's east coast when both pieces are placed adjacent on a tray.
-
-        OceanExtension(bbox=(127, 33, 132, 42),
-                       label="Sea of Japan registration")
+    Used as the value type in `OceanExtension.per_neighbor`. All fields are
+    optional — `None` means "fall back to the OceanExtension-level default".
     """
-    bbox: tuple[float, float, float, float]   # WGS84 minx, miny, maxx, maxy
-    height_mm: float = 1.5
-    label: str = ""
+    # Override max_distance_km for this specific neighbor.
+    max_distance_km: Optional[float] = None
+    # When set, restricts the computed sector polygon to within this WGS84
+    # bbox (minx, miny, maxx, maxy). Useful for "extend toward this neighbor,
+    # but only this far, please".
+    clamp_bbox: Optional[tuple[float, float, float, float]] = None
+
+
+@dataclass
+class OceanExtension:
+    """Per-tile ocean rules. The driver computes the actual polygon using
+    the ray-cast / border-trace algorithm in `OCEAN_TILE_GUIDELINES.md`
+    (auto-discovers neighbors that pass the ownership + distance/area
+    thresholds, then unions a buffer halo with per-neighbor sector polygons).
+
+    Most members will use the defaults; the knobs below exist for cases
+    where the algorithm needs nudging. Per-extension `height_mm` is
+    intentionally absent — see module-level `OCEAN_HEIGHT_MM`.
+
+    The resulting low-elevation mesh is produced via the same DEM-marking +
+    vertex-lowering mechanism Denmark uses for bridges; bridges and ocean
+    extensions can coexist on a single member.
+
+    The computation logic lands in bead 04 (`ocean_geom.py` / driver swap).
+    This dataclass is currently a schema-only landing — bead 03.
+    """
+
+    # Universal buffer halo around all coasts. Always applied.
+    buffer_km: float = 50.0
+
+    # Max nearest-point distance (km) to a neighbor we extend toward. Beyond
+    # this, only the buffer halo applies on that side.
+    max_distance_km: float = 1000.0
+
+    # Min area (km²) for a landmass to count as a "neighbor". Filters out
+    # tiny offshore islets that would otherwise generate awkward
+    # micro-extensions.
+    min_neighbor_area_km2: float = 10_000.0
+
+    # If True, the algorithm auto-discovers neighbors that pass the
+    # ownership rule and the distance/area thresholds. If False, only
+    # extends toward `explicit_neighbors`.
+    auto_discover_neighbors: bool = True
+
+    # Force-include neighbors (NE ADMIN names). Always extends to these
+    # regardless of distance/area, subject to the ownership rule. Useful
+    # for cases the auto-discover misses (legitimate connections at
+    # 1200 km, etc.).
+    explicit_neighbors: list[str] = field(default_factory=list)
+
+    # Force-exclude neighbors. The algorithm would normally connect to
+    # these but you explicitly want it not to. E.g. politically awkward,
+    # or the visual result is wrong.
+    exclude_neighbors: list[str] = field(default_factory=list)
+
+    # Per-neighbor parameter overrides. Key = neighbor NE ADMIN name.
+    per_neighbor: dict[str, NeighborOverride] = field(default_factory=dict)
+
+    # Last-resort bailout: hand-authored polygon that REPLACES the entire
+    # computed ocean extension. Use only when algorithm iteration can't
+    # produce a satisfactory result. Stringified type hint keeps `groups.py`
+    # shapely-import-free.
+    override_polygon: Optional["shapely.geometry.base.BaseGeometry"] = None
 
 
 @dataclass
@@ -175,18 +255,21 @@ TIERRA_DEL_FUEGO = CountryGroup(
 KOREA_JAPAN = CountryGroup(
     name="Korea_Japan",
     members=["South Korea", "Japan"],
-    # Japan's tile extends west across the Sea of Japan so the printed
-    # piece carries the registration ocean. South Korea is rendered at its
-    # native footprint and snaps against Japan's western shoulder.
-    # Bbox covers Sea of Japan: 127°E (Korean east coast) to 132°E (Japan's
-    # west coast), 33°N (Kyushu) to 42°N (Hokkaido). all-NE-land subtraction
-    # in the driver ensures Korean coastlines and Japan's own islands
-    # inside the bbox stay as land, not ocean.
+    # Japan's tile extends west across the Sea of Japan so the printed piece
+    # carries the registration ocean. South Korea is rendered at its native
+    # footprint and snaps against Japan's western shoulder.
+    #
+    # New schema (bead 03): all knobs at default plus an explicit pin to
+    # South Korea. Per the bead's Open Question #2 we pick the easier,
+    # deterministic path: `explicit_neighbors=["South Korea"]` guarantees
+    # the algorithm extends across the Sea of Japan regardless of how
+    # auto-discovery's distance/area thresholds end up tuned. Whether to
+    # also exercise `auto_discover_neighbors=True` (and rely on it picking
+    # up South Korea on its own) is deferred to bead 06's pilot.
     ocean_extensions={
         "Japan": [
             OceanExtension(
-                bbox=(127.0, 33.0, 132.0, 42.0),
-                label="Sea of Japan registration",
+                explicit_neighbors=["South Korea"],
             ),
         ],
     },
