@@ -274,7 +274,15 @@ KOREA_JAPAN = CountryGroup(
         ],
     },
     notes="Test for the ocean-extension mechanism. Japan owns the Sea of "
-          "Japan registration surface; Korea snaps to its west.",
+          "Japan registration surface; Korea snaps to its west. Auto-discovery "
+          "(if enabled) also surfaces Japan↔Russia (island↔continental, correct "
+          "per ownership rule), but the largest-component hulls still overlap "
+          "via the Sakhalin/Kuril chain entangling Hokkaido's hull with the "
+          "Russian Far East. The orchestrator gracefully skips that sub-pair "
+          "(per-pair HullsOverlapError catch); only the Japan↔Korea sector "
+          "survives. Not a bug — extending Japan's tile toward Russia would "
+          "need further decomposition (e.g. Hokkaido vs Sakhalin as separate "
+          "primary landmasses) or per_neighbor[Russia].clamp_bbox.",
 )
 
 

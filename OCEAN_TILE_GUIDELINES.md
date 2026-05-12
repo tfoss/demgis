@@ -99,8 +99,11 @@ For a country A that owns ocean toward a neighbor B (or set of
 neighbors {B₁, B₂, …}):
 
 ### Step 1 — Buffer halo
-Compute `halo = A_geom.buffer(buffer_km) - A_geom`. This is a constant-
-width annulus around A's land. It will be unioned with the extended
+Compute `halo = A_geom.buffer(buffer_km) - A_geom - other_land_union`.
+This is a constant-width annulus around A's land, with **third-party
+NE land subtracted** so the halo doesn't bleed onto nearby foreign
+territory (e.g. Japan's 50 km halo reaches Sakhalin/Kuril and would
+otherwise overlap Russia). It will be unioned with the extended
 sectors below.
 
 ### Step 2 — Find connectable neighbors
