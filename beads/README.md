@@ -15,6 +15,8 @@ Decomposes phase **E2** of [`../MIGRATION_PLAN_DRAFT.md`](../MIGRATION_PLAN_DRAF
 | 07 | [Pilot 2 — Sri Lanka (single-pair clean validation)](07_pilot_sri_lanka.md) | 01–06 |
 | 08 | [Pilot 3 — Great Britain (multi-neighbour sector union)](08_pilot_great_britain.md) | 01–07 |
 | 09 | [Pilot 4 — Cuba+Caribbean (multi-pair, three-way junction)](09_pilot_cuba_caribbean.md) | 01–08 |
+| 10 | [Inland water bodies (lakes + inland seas)](10_inland_water_bodies.md) | 03, 04, 05 (Cat 2B); independent for Cat 2A |
+| 11 | [Dovetail-split STL generation (feasibility investigation)](11_dovetail_split_investigation.md) | — |
 
 Pilot 5 (Indonesia / Malaysia / PNG) is deferred until Phase C (LCC migration) lands — no bead yet.
 
