@@ -241,6 +241,18 @@ Layered on §4 — these checks gate the new ocean tile pipeline:
 
 `extent_within_print_bed` from §4 covers both ocean and land tiles — no separate ocean-specific check needed.
 
+## 6. Inland water bodies
+
+Parallel work area to §5, not part of it. The §5 ocean machinery (buffer halo, -200m DEM mark, 1.5mm vertex-lowering) exists to give the world ocean a single conceptual surface and a paint-receiving apron around coastal tiles. Inland water bodies don't share that frame — each sits at its own true elevation (Titicaca +3812m, Baikal +456m, Caspian −28m), and Copernicus GLO-30 already renders each as a radar-flat patch at the correct elevation. The default rendering is therefore "leave the DEM alone"; lakes appear as flat patches at their DEM-reported surface elevation, NOT artificially lowered to sea level.
+
+Three categories:
+- **Cat 1 — world-ocean-connected** (Mediterranean, Persian Gulf, Baltic): already handled by §5.
+- **Cat 2A — single-country lakes** (Baikal, Tahoe, Issyk-Kul, the majority): polygon-hole-fill the NE country mask with the lake geometry from `ne_10m_lakes`; DEM provides the elevation. No halo, no -200m, no vertex-lowering.
+- **Cat 2B — multi-country lakes / inland seas ≥ threshold** (Caspian, Great Lakes, Victoria, Tanganyika, Malawi, **Black Sea** — Black Sea is Cat 2B despite Bosphorus connection, territorially inland-sea-like): each body is its own `CountryGroup` member, reusing the bead 04 member-handling path. Bordering country tiles end at the natural NE shoreline; no territorial division of the water body required.
+- (Cat 3 — small lakes pass through as terrain.)
+
+Bordering country tiles end at the NE shoreline with no registration halo on either side — same mechanism as existing country-country land borders (`VECTOR_SIMPLIFY_DEGREES` on a shared NE source guarantees matching vertices), no asymmetric new pattern. Full spec including threshold and acceptance criteria: `beads/10_inland_water_bodies.md`.
+
 ---
 
 ## Phasing
@@ -253,6 +265,7 @@ Layered on §4 — these checks gate the new ocean tile pipeline:
 | **D. Global LCC migration** | Apply LCC to all zones. Regenerate all STLs. Run QC matrix. | Medium — slow compute (days), but pipeline is unchanged. | 3–5 days mostly compute |
 | **E. Coverage closeout** | Build NCA, Caribbean, Pacific, Greenland, Antarctica zones. Each is a `zones.yaml` entry + a tile download + a build run. | Low per zone — well-trodden path. | 1–2 days per zone |
 | **E2. Ocean-tile unification (§5, spec in `OCEAN_TILE_GUIDELINES.md`)** | Implement the algorithm in `groups.py` / `make_country_group.py`: `is_landlocked` + `is_island_country` precomputes, STRtree over NE land for neighbour discovery, `find_outer_tangents`, `trace_coast_between`, `build_sector_polygon`, `compute_ocean_extension`. Replace bbox-based `OceanExtension`. Pilot order: Japan+Korea (port existing group) → Sri Lanka → Great Britain → Cuba+Caribbean → Indonesia/Malaysia/PNG (deferred until Phase C lands). Retire `generate_*_with_ocean*.py` afterwards. | Medium — outer-tangent + coastline-tracing geometry primitives are non-trivial; seam-consistency QC is novel. Indonesia pilot blocked on Phase C. | 3.5 days framework (incl. ½ day for landlocked filter + STRtree spatial index — load-bearing, not optional) + 1–2 days per pilot × 4 pilots + 1 day QC = 8.5–12.5 days for steps 1–4; step 5 sequenced after Phase C. |
+| **E3. Inland water bodies (§6, spec in `beads/10_inland_water_bodies.md`)** | Cat 2A: NE lakes layer load + polygon-hole-fill driver patch in `make_country_group.py` (Baikal, Tahoe, Issyk-Kul, …). Cat 2B: each multi-country body (Caspian, Great Lakes, Victoria, Tanganyika, Malawi, Black Sea) becomes a `CountryGroup` member reusing bead 04's path; bordering country tiles end at the NE shoreline. Threshold `MIN_INLAND_WATER_AREA_KM²` needs picking on first pilot. No registration halo at the lake-country seam — pieces meet at the NE shoreline via the same shared-polygon mechanism as country-country land borders. | Low — Cat 2B reuses E2 machinery; Cat 2A is a small driver patch. | ~2 days Cat 2A driver patch + ~1 day per Cat 2B body × ~5 bodies ≈ 7 days. |
 | **F. Cleanup** | Delete the ~150 dead `STLs_*` dirs (after confirming nothing in `GOLD_STLs` depends on them). Archive the 17 design docs into `docs/history/`. Tighten CLAUDE.md to point at the new entry points. | Low. | half day |
 
 Total: ~3 weeks of focused work to get to a clean, generic, all-country creator with automated QC, ignoring print-test wall-clock for the pilot.
