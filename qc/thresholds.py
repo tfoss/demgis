@@ -62,3 +62,12 @@ PAIR_BORDER_OVERLAP_AREA_DEG2_MAX = 0.05 # TBD: confirm against baseline
 PAIR_MIN_BORDER_POINTS = 50              # below = "didn't find a real
                                          # shared border"; sanity check
                                          # rather than fit quality
+
+# ---- Ocean tiles (bead 05) ------------------------------------------
+# Print-mm-space tolerance for `qc.ocean_tile.seam_consistency`. The
+# bead specifies 0.2 mm; converted via GLOBAL_XY_SCALE=0.33 this gives
+# ~0.6 m of CRS slack, sub-pixel at our 2 km DEMs. The threshold is
+# testing *processing consistency* (shared NE source + identical
+# VECTOR_SIMPLIFY_DEGREES guarantees vertex agreement), not raster
+# precision; loosen only if real processing variation forces it.
+OCEAN_SEAM_CONSISTENCY_MM = 0.2          # TBD: confirm against pilots
