@@ -138,15 +138,11 @@ TIERRA_DEL_FUEGO = CountryGroup(
         "Argentina": (-76.0, -56.0, -63.0, -52.0),
         "Chile":     (-76.0, -56.0, -63.0, -52.0),
     },
-    regional_capitals={
-        # Default capitals (Buenos Aires, Santiago) are far north of the clip.
-        # Use the southernmost provincial capitals instead.
-        "Argentina": ("Ushuaia",      -68.3030, -54.8019),
-        "Chile":     ("Punta Arenas", -70.9171, -53.1638),
-    },
-    # Coastal capitals — extrude the star so it sits above the surface.
-    extrude_star={"Argentina": True, "Chile": True},
-    notes="Southern tip of South America (~Ushuaia + Punta Arenas region).",
+    # No regional_capitals: TdF is a sub-region, not a country. Buenos Aires
+    # and Santiago belong on the full Argentina/Chile STLs, not here. The
+    # driver's resolve_capital() will return None for both members because
+    # the default capitals fall outside wgs84_bbox — stars are suppressed.
+    notes="Southern tip of South America. No capital stars (sub-region piece).",
 )
 
 
