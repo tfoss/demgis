@@ -62,6 +62,25 @@ ENV CONDA_DEFAULT_ENV=demgis
 ENV PATH=/opt/conda/envs/demgis/bin:$PATH
 RUN echo "conda activate demgis" >> /root/.bashrc
 
+# ---- Non-root user for Claude Code ----
+# Claude Code refuses to run with --dangerously-skip-permissions as root for
+# security reasons. Create a regular user "demgis" (UID 1000) and switch to
+# it. The host's ~/.claude and ~/.claude.json are bind-mounted into this
+# user's HOME via docker-compose so auth state is preserved.
+#
+# UID 1000 is the Linux default for the first regular user. On Docker
+# Desktop for Mac/Windows the bind-mount layer (osxfs/grpcfuse/WSL2) handles
+# UID translation transparently, so files owned by the host user (UID 501
+# on macOS) remain read-writable by container UID 1000.
+ARG DEMGIS_UID=1000
+RUN groupadd -g ${DEMGIS_UID} demgis && \
+    useradd -m -u ${DEMGIS_UID} -g ${DEMGIS_UID} -s /bin/bash demgis && \
+    echo "conda activate demgis" >> /home/demgis/.bashrc && \
+    chown -R demgis:demgis /home/demgis
+
+USER demgis
+ENV HOME=/home/demgis
+
 # ---- Workspace + entrypoint ----
 WORKDIR /workspace
 

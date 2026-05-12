@@ -1,16 +1,26 @@
 # docker-compose.yml — local dev workflow for demgis.
 #
-# Volumes:
-#   .:/workspace                   the repo (live, edits persist on host)
-#   ${DEM_DATA}:/data              raw Copernicus tile cache (read-only by
-#                                  default — set RW=true in .env to override)
-#   ${STL_OUT:-./outputs}:/outputs generated STLs and DEMs that should NOT
-#                                  pollute the repo (gitignored locally too)
-#   ${HOME}/.claude:/root/.claude  host's Claude Code auth state, so claude
-#                                  inside the container is already logged in
+# Volumes (note container HOME is /home/demgis — non-root user, required by
+# claude --dangerously-skip-permissions):
+#   .:/workspace                              the repo (live; edits persist)
+#   ${DEM_DATA}:/data                         raw Copernicus tile cache (RO)
+#   ${OVERFLOW_TILES}/dem_tiles_overflow:/data_overflow:ro
+#                                              optional: laptop overflow tile
+#                                              dir (see project_tile_cache_
+#                                              overflow). Falls back to a
+#                                              placeholder if OVERFLOW_TILES
+#                                              isn't set in .env.
+#   ${STL_OUT:-./outputs}:/outputs            generated STLs (gitignored)
+#   ${HOME}/.claude:/home/demgis/.claude      Claude Code auth state directory
+#   ${HOME}/.claude.json:/home/demgis/.claude.json
+#                                              Claude Code project state file
+#                                              (must be a separate mount —
+#                                              the .json sits next to the
+#                                              .claude dir, not inside it)
 #
-# Set DEM_DATA in a .env file at the repo root, e.g.:
+# Set in .env file at the repo root, e.g.:
 #   DEM_DATA=/Volumes/gray/DEM
+#   OVERFLOW_TILES=/Users/tfoss   (parent of dem_tiles_overflow/)
 #
 # Quick reference:
 #   docker compose build            (re)build the image
@@ -32,8 +42,10 @@ services:
     volumes:
       - .:/workspace
       - ${DEM_DATA:-./_no_dem_data_set}:/data:ro
+      - ${OVERFLOW_TILES:-./_no_overflow_set}/dem_tiles_overflow:/data_overflow:ro
       - ${STL_OUT:-./outputs}:/outputs
-      - ${HOME}/.claude:/root/.claude
+      - ${HOME}/.claude:/home/demgis/.claude
+      - ${HOME}/.claude.json:/home/demgis/.claude.json
       # Persist conda pkgs cache so rebuilds reuse downloaded packages
       - demgis-conda-pkgs:/opt/conda/pkgs
 
