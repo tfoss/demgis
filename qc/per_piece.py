@@ -466,6 +466,24 @@ def stl_footprint_wgs84(
         return None
     footprint = unary_union(section_polys)
 
+    # Densify edges before reprojection. Long straight edges in a
+    # projected CRS (especially Equal Earth at high latitudes / near
+    # the antimeridian) become straight lines in WGS84 after vertex-
+    # only reprojection, producing globe-spanning wrap-around artifacts
+    # in the QC overlay. Insert intermediate vertices every ~50 km in
+    # CRS space so the reprojected polygon follows the geodesic curve.
+    # The footprint is in mesh-mm units; piece_tf.scale is mm-per-CRS-m
+    # (≈ 0.0000825 for a 2 km DEM at GLOBAL_XY_SCALE=0.33), so 50 km in
+    # CRS corresponds to 50_000 * scale ≈ 4.1 mm in mesh-mm units.
+    try:
+        scale = float(piece_tf.scale)
+    except AttributeError:
+        scale = 0.0
+    if scale > 0:
+        max_seg_mm = 50_000.0 * scale  # 50 km in CRS → mesh mm
+        if max_seg_mm > 0:
+            footprint = footprint.segmentize(max_seg_mm)
+
     transformer = pyproj.Transformer.from_crs(dem_crs, "EPSG:4326", always_xy=True)
 
     def convert_ring(coords):
