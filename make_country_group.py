@@ -35,7 +35,8 @@ from shapely.validation import make_valid
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import make_all_sa_with_vector_clip as pipe
 import ocean_precompute
-from groups import GROUPS, Bridge, CountryGroup, OceanExtension
+import ocean_extension as ocean_ext_mod
+from groups import GROUPS, Bridge, CountryGroup
 
 
 # ---------------------------------------------------------------------------
@@ -69,25 +70,6 @@ def sorted_sub_polygons(geom) -> list[Polygon]:
     polys = list(geom.geoms)
     polys.sort(key=polygon_area_km2, reverse=True)
     return polys
-
-
-def build_ocean_polygon(extension: OceanExtension, ne_df: gpd.GeoDataFrame):
-    """Construct an ocean polygon = bbox minus all NE land within the bbox.
-
-    Returned geometry is in WGS84. The subtraction is critical: without it,
-    other countries' coastlines / islands inside the bbox would get marked
-    as ocean (dropped to -200m pre-smooth) and end up as a low slab in the
-    final mesh — losing real terrain.
-    """
-    bbox_poly = box(*extension.bbox)
-    intersecting = ne_df[ne_df.geometry.intersects(bbox_poly)]
-    if intersecting.empty:
-        return bbox_poly
-    land = unary_union(intersecting.geometry)
-    ocean = bbox_poly.difference(land)
-    if not ocean.is_valid:
-        ocean = make_valid(ocean)
-    return ocean
 
 
 def construct_bridges(
@@ -375,10 +357,34 @@ def run_qc(
     member_ne_polygons_wgs84: Optional[dict] = None,
     bridges_wgs84: Optional[list] = None,
     resolved_capitals: Optional[dict] = None,
+    ocean_extensions_ee: Optional[dict] = None,
+    member_geoms_ee: Optional[dict] = None,
+    ocean_neighbours_ee: Optional[dict] = None,
+    ocean_sector_polys_ee: Optional[dict] = None,
 ) -> bool:
     """Run per-piece (each member) QC plus visual QC (PNG per member +
     group overview). Write qc.json with metric pointers. Returns True if
-    all gating checks passed."""
+    all gating checks passed.
+
+    Ocean-tile arguments (bead 05) — all optional, supplied by the bead
+    04 orchestrator when the group has any ``OceanExtension`` members.
+    Geometries must be in Equal Earth metres (``EPSG:8857``):
+
+    * ``ocean_extensions_ee``: ``{member -> ext_polygon_ee}`` — the
+      final per-member extension polygons (halo ∪ per-pair sectors).
+    * ``member_geoms_ee``: ``{member -> member_polygon_ee}`` for every
+      member of the group (used for the halo + seam checks).
+    * ``ocean_neighbours_ee``: ``{member -> {nb_name -> nb_polygon_ee}}``
+      — neighbours this member extends toward. Drives the
+      seam-consistency check (one sub-result per neighbour).
+    * ``ocean_sector_polys_ee``: ``{member -> [per-pair sector_polygon]}``
+      — used by the no-slivers check. If omitted, the check falls back
+      to inspecting the unioned ``ocean_extensions_ee[member]``.
+
+    When all four are supplied (i.e. the orchestrator actually
+    produced extension geometry), :func:`qc.ocean_tile.run_all_ocean_checks`
+    contributes a ``kind="ocean_group"`` sub-report to ``qc.json``.
+    """
     from qc.per_piece import run_all_per_piece_checks
     from qc.cli import _resolve_piece_transform
     from qc.report import QCReport
@@ -416,6 +422,33 @@ def run_qc(
             ne_path=ne_path,
         )
         report.add_child(child)
+
+    # Ocean-tile checks (bead 05). Only runs when the bead-04 orchestrator
+    # actually computed extension geometry for this group; pure land groups
+    # (Denmark, UK_Ireland, Tierra_del_Fuego) skip it.
+    if ocean_extensions_ee and member_geoms_ee:
+        try:
+            from qc.ocean_tile import run_all_ocean_checks
+            # Build the ocean-configs map from the group's ocean_extensions
+            # field for the provenance + halo-radius lookups. Today each
+            # member has at most one OceanExtension entry; if that ever
+            # grows we'd need a richer mapping.
+            ocean_configs = {}
+            for m, ext_list in group.ocean_extensions.items():
+                if ext_list:
+                    ocean_configs[m] = ext_list[0]
+            ocean_report = run_all_ocean_checks(
+                group_name=group.name,
+                computed_extensions=ocean_extensions_ee,
+                member_geoms_ee=member_geoms_ee,
+                sector_polygons_by_member=ocean_sector_polys_ee,
+                neighbour_geoms_by_member=ocean_neighbours_ee,
+                ocean_configs=ocean_configs,
+            )
+            report.add_child(ocean_report)
+        except Exception as e:
+            print(f"  ocean QC failed: {e}")
+            traceback.print_exc()
 
     # Visual QC — per-member PNGs + group overview, all in the same
     # timestamped dir. Each PNG shows NE polygon vs actual STL footprint
@@ -530,33 +563,6 @@ def main():
             member_wgs84, group.bridges
         )
 
-    # 2b. Apply ocean extensions. For each member with extensions: compute
-    #     ocean polygon (bbox minus all NE land in bbox), union with member's
-    #     geometry (so the DEM clip + vector clip cover the ocean area), and
-    #     track per-member for downstream bridge_polys_crs propagation.
-    ocean_polys_wgs84_by_member: dict[str, list] = {m: [] for m in group.members}
-    if group.ocean_extensions:
-        print(f"\nConstructing ocean extensions...")
-        for member, extensions in group.ocean_extensions.items():
-            if member not in member_wgs84:
-                print(f"  WARNING: ocean_extension for unknown member {member}")
-                continue
-            for ext in extensions:
-                ocean = build_ocean_polygon(ext, ne)
-                if ocean.is_empty:
-                    print(f"    {member}: {ext.label or ext.bbox} — empty ocean (all land)")
-                    continue
-                ocean_polys_wgs84_by_member[member].append(ocean)
-                # Union into member geom so vector clip includes the ocean
-                merged = unary_union([member_wgs84[member], ocean])
-                if not merged.is_valid:
-                    merged = make_valid(merged)
-                member_wgs84[member] = merged
-                area_km2 = polygon_area_km2(ocean) if ocean.geom_type == "Polygon" else \
-                           sum(polygon_area_km2(p) for p in ocean.geoms)
-                print(f"    {member}: {ext.label or ext.bbox} — "
-                      f"{area_km2:,.0f} km² ocean area added")
-
     # 3. Reproject everything to DEM CRS
     print(f"\nReprojecting to DEM CRS...")
     member_proj = {m: reproject_to_dem_crs(g, dem.crs)
@@ -565,11 +571,50 @@ def main():
     for bridge, bp_wgs in zip(group.bridges, bridge_polys_wgs84):
         bp_crs = reproject_to_dem_crs(bp_wgs, dem.crs)
         bridge_polys_crs_by_member.setdefault(bridge.a_member, []).append(bp_crs)
-    # Ocean extensions reuse the same marking + lowering machinery as bridges.
-    for member, ocean_polys in ocean_polys_wgs84_by_member.items():
-        for op in ocean_polys:
-            op_crs = reproject_to_dem_crs(op, dem.crs)
-            bridge_polys_crs_by_member.setdefault(member, []).append(op_crs)
+
+    # 3b. Apply ocean extensions (bead 04). compute_ocean_extension runs
+    #     entirely in Equal Earth (EPSG:8857). If the DEM CRS is something
+    #     other than EE we reproject the result one extra hop; for the
+    #     pilot DEMs which ARE in EE the conversion is a no-op. The
+    #     resulting polygon is (a) unioned into the member's DEM-CRS
+    #     vector-clip geometry so the surface mesh covers the ocean
+    #     area, and (b) appended to bridge_polys_crs_by_member so the
+    #     -200m DEM-mark + 1.5mm vertex-lower pipeline (the same one
+    #     Denmark uses for bridges) treats it as a low ocean slab.
+    if group.ocean_extensions:
+        print(f"\nConstructing ocean extensions...")
+        dem_crs_str = dem.crs.to_string()
+        for member in group.ocean_extensions:
+            if member not in member_proj:
+                print(f"  WARNING: ocean_extension for unknown member {member}")
+                continue
+            ocean_ee = ocean_ext_mod.compute_ocean_extension(
+                member, group, precompute.ne_ee, precompute,
+            )
+            if ocean_ee is None or ocean_ee.is_empty:
+                print(f"    {member}: ocean extension empty")
+                continue
+            # EE -> DEM CRS (no-op when DEM is EE).
+            if dem_crs_str == ocean_precompute.TARGET_CRS:
+                ocean_crs = ocean_ee
+            else:
+                ocean_crs = gpd.GeoSeries(
+                    [ocean_ee], crs=ocean_precompute.TARGET_CRS,
+                ).to_crs(dem.crs).iloc[0]
+
+            area_km2 = ocean_ee.area / 1_000_000.0
+            print(f"    {member}: ocean extension {area_km2:,.0f} km²")
+
+            # (a) merge into member's vector-clip geom (DEM-CRS).
+            merged = unary_union([member_proj[member], ocean_crs])
+            if not merged.is_valid:
+                merged = make_valid(merged)
+            member_proj[member] = merged
+
+            # (b) tag for the bridge-style DEM marking + vertex lowering.
+            bridge_polys_crs_by_member.setdefault(member, []).append(
+                ocean_crs
+            )
 
     # 4. Render each member.
     # Resolve effective capital per member (regional override → default →
