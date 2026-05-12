@@ -64,15 +64,16 @@ RUN echo "conda activate demgis" >> /root/.bashrc
 
 # ---- Non-root user for Claude Code ----
 # Claude Code refuses to run with --dangerously-skip-permissions as root for
-# security reasons. Create a regular user "demgis" (UID 1000) and switch to
-# it. The host's ~/.claude and ~/.claude.json are bind-mounted into this
-# user's HOME via docker-compose so auth state is preserved.
+# security reasons. Create a regular user "demgis" and switch to it. Host's
+# ~/.claude and ~/.claude.json are bind-mounted into this user's HOME via
+# docker-compose so auth state is preserved.
 #
-# UID 1000 is the Linux default for the first regular user. On Docker
-# Desktop for Mac/Windows the bind-mount layer (osxfs/grpcfuse/WSL2) handles
-# UID translation transparently, so files owned by the host user (UID 501
-# on macOS) remain read-writable by container UID 1000.
-ARG DEMGIS_UID=1000
+# UID/GID 1500 avoids collision with the condaforge base image's pre-existing
+# UID 1000. On Docker Desktop for Mac/Windows the bind-mount layer
+# (osxfs/grpcfuse/WSL2) handles UID translation transparently, so files
+# owned by the host user (e.g. UID 501 on macOS) remain read-writable by
+# the container user regardless of UID.
+ARG DEMGIS_UID=1500
 RUN groupadd -g ${DEMGIS_UID} demgis && \
     useradd -m -u ${DEMGIS_UID} -g ${DEMGIS_UID} -s /bin/bash demgis && \
     echo "conda activate demgis" >> /home/demgis/.bashrc && \
