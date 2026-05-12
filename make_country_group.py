@@ -34,6 +34,7 @@ from shapely.validation import make_valid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import make_all_sa_with_vector_clip as pipe
+import ocean_precompute
 from groups import GROUPS, Bridge, CountryGroup, OceanExtension
 
 
@@ -493,6 +494,21 @@ def main():
     print(f"  Bounds: {dem.bounds}")
     ne = gpd.read_file(args.ne)
     print(f"  NE:     {len(ne)} countries loaded")
+
+    # Ocean-tile precompute (bead 01): reproject NE to Equal Earth,
+    # classify every country as landlocked / island / continental,
+    # and build a process-wide STRtree for neighbour discovery.
+    # Downstream ocean-tile beads (02 tangents, 04 orchestrator)
+    # consume the bundle. Cheap (~2s on the 10m layer); re-run per
+    # driver invocation.
+    precompute = ocean_precompute.precompute_all(ne)
+    print(
+        f"  Precompute: {precompute.elapsed_seconds:.2f}s, "
+        f"classes = "
+        f"{sum(1 for v in precompute.country_class.values() if v == 'landlocked')} landlocked / "
+        f"{sum(1 for v in precompute.country_class.values() if v == 'island')} island / "
+        f"{sum(1 for v in precompute.country_class.values() if v == 'continental')} continental"
+    )
 
     # 1. Load each member's WGS84 geometry (with bbox + island filter).
     # Also keep the ORIGINAL NE polygon (no filter, no clip) for the QC
