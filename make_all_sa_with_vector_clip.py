@@ -1207,6 +1207,14 @@ def process_country(
     country_geom_mm = get_country_geom_in_mm(country_geom, transform, step)
     solid = clip_mesh_to_vector(solid, country_geom_mm)
 
+    # Snapshot pre-mirror, pre-scale mm bounds — these correspond directly to
+    # pixel positions in the clipped DEM via x_mm = col * XY_MM_PER_PIXEL.
+    # Used by the driver to compute an accurate mesh CRS bbox for alignment.
+    # Captured AFTER vector clip (so it reflects only land geometry) but
+    # BEFORE simplify/star/mirror/scale (so the relationship to the DEM grid
+    # is direct).
+    _premirror_bounds_mm = solid.bounds.copy()
+
     # Lower bridge vertices from BASE_THICKNESS_MM (~2.0mm) to bridge_height_mm.
     # Bridge zones were marked at -200m pre-smooth, so they came out at
     # BASE_THICKNESS_MM after solidify. Selecting vertices in the bridge bbox
@@ -1282,6 +1290,21 @@ def process_country(
     out_path = os.path.join(output_dir, f"{country_name.replace(' ', '_')}{suffix}.stl")
     print(f"  Writing: {out_path} ({len(solid.faces)} faces)")
     solid.export(out_path)
+
+    # Return per-piece metadata for the driver / alignment.json
+    return {
+        "stl_path": out_path,
+        "premirror_bounds_mm": {
+            "xmin": float(_premirror_bounds_mm[0, 0]),
+            "ymin": float(_premirror_bounds_mm[0, 1]),
+            "xmax": float(_premirror_bounds_mm[1, 0]),
+            "ymax": float(_premirror_bounds_mm[1, 1]),
+        },
+        "dem_transform_a": float(transform.a),
+        "dem_transform_c": float(transform.c),
+        "dem_transform_e": float(transform.e),
+        "dem_transform_f": float(transform.f),
+    }
 
 
 def main():

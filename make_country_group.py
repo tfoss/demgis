@@ -263,6 +263,7 @@ def build_alignment(
     dem_path: str,
     dem: rasterio.DatasetReader,
     member_geoms_proj: dict,
+    pipeline_meta_by_member: Optional[dict] = None,
 ) -> dict:
     """Construct alignment.json-compatible metadata (same schema as
     pilot_eqearth_alignment.json / seasia_eurasia_alignment.json)."""
@@ -278,6 +279,39 @@ def build_alignment(
         origin_x = transform.c
         origin_y = transform.f
         east_edge_x = origin_x + ncols * transform.a
+
+        # Authoritative CRS bbox for the back-projection: derive from the
+        # MESH's pre-mirror mm bounds captured during process_country. The
+        # mm-to-CRS relationship is direct: x_mm = col * XY_MM_PER_PIXEL where
+        # col is in the clipped DEM grid, and CRS x = transform.c + col*pixel_w.
+        # This reflects what the STL actually contains, post component-filter
+        # and post vector-clip — strictly better than the geom or DEM bbox.
+        mesh_bbox_crs = None
+        pmeta = (pipeline_meta_by_member or {}).get(cname)
+        if pmeta is not None:
+            pb = pmeta["premirror_bounds_mm"]
+            tx_c = pmeta["dem_transform_c"]
+            tx_f = pmeta["dem_transform_f"]
+            tx_a = pmeta["dem_transform_a"]
+            tx_e = pmeta["dem_transform_e"]
+            # mm -> pixel column / row in clipped DEM:
+            #   col = x_mm / XY_MM_PER_PIXEL
+            #   row = y_mm / XY_MM_PER_PIXEL
+            # pixel -> CRS:
+            #   crs_x = tx_c + col * tx_a
+            #   crs_y = tx_f + row * tx_e   (tx_e is typically negative)
+            xmm_min = pb["xmin"]; xmm_max = pb["xmax"]
+            ymm_min = pb["ymin"]; ymm_max = pb["ymax"]
+            mm_per_px = pipe.XY_MM_PER_PIXEL
+            crs_xmin = tx_c + (xmm_min / mm_per_px) * tx_a
+            crs_xmax = tx_c + (xmm_max / mm_per_px) * tx_a
+            crs_ymin = tx_f + (ymm_max / mm_per_px) * tx_e  # ymm_max → southernmost
+            crs_ymax = tx_f + (ymm_min / mm_per_px) * tx_e  # ymm_min → northernmost
+            mesh_bbox_crs = {
+                "minx": crs_xmin, "miny": crs_ymin,
+                "maxx": crs_xmax, "maxy": crs_ymax,
+            }
+
         suffix = "_starup" if group.extrude_star.get(cname, False) else "_solid"
         stl_name = f"{cname.replace(' ', '_')}{suffix}.stl"
         stl_path = os.path.join(out_dir, stl_name)
@@ -288,6 +322,10 @@ def build_alignment(
             "nrows": nrows,
             "east_edge_crs_x": east_edge_x,
             "is_mainland": True,
+            # Authoritative bbox of the mesh's actual extent in CRS. Falls
+            # back to None on legacy / ocean-tile paths; PieceTransform uses
+            # the older ncols-based math when this isn't available.
+            "mesh_bbox_crs": mesh_bbox_crs,
         }
 
     return {
@@ -477,15 +515,18 @@ def main():
             pipe.CAPITALS[member] = cap
 
     succeeded, failed = [], []
+    pipeline_meta_by_member: dict = {}
     try:
         for member, geom_proj in member_proj.items():
             try:
-                patched_process_country(
+                meta = patched_process_country(
                     member, group, geom_proj, dem, dem.transform,
                     out_dir, pipe.XY_STEP, pipe.TARGET_FACES,
                     extrude_star=group.extrude_star.get(member, False),
                     bridge_polys_crs=bridge_polys_crs_by_member.get(member) or None,
                 )
+                if isinstance(meta, dict):
+                    pipeline_meta_by_member[member] = meta
                 succeeded.append(member)
             except pipe.STLGenerationError as e:
                 print(f"\n!!! STL FAILED for {member}: {e}\n")
@@ -505,7 +546,10 @@ def main():
 
     # 5. Alignment JSON
     print(f"\nBuilding alignment.json...")
-    alignment = build_alignment(group, out_dir, args.dem, dem, member_proj)
+    alignment = build_alignment(
+        group, out_dir, args.dem, dem, member_proj,
+        pipeline_meta_by_member=pipeline_meta_by_member,
+    )
     alignment_path = os.path.join(out_dir, "alignment.json")
     with open(alignment_path, "w") as f:
         json.dump(alignment, f, indent=2)

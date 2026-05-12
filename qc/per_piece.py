@@ -378,6 +378,7 @@ class PieceTransform:
         is_mainland: bool = True,
         xy_mm_per_pixel: float = 0.5,
         global_xy_scale: float = 0.33,
+        geom_bbox_crs: Optional[dict] = None,
     ):
         self.origin_x = origin_x
         self.origin_y = origin_y
@@ -388,7 +389,20 @@ class PieceTransform:
         self.global_xy_scale = global_xy_scale
         # mm-per-CRS-unit
         self.scale = xy_mm_per_pixel * global_xy_scale / pixel_w
-        if is_mainland and ncols is not None:
+
+        # X-axis: post-MIRROR_X + shift-to-zero, stl_x=0 corresponds to the
+        # easternmost-MESH x in CRS (mesh_bbox_crs.maxx) — NOT to the DEM
+        # clip's east edge (origin_x + ncols*pixel_w). When mesh_bbox_crs is
+        # supplied (new driver pipeline), use it. Fall back to ncols-based
+        # math for ocean tiles or legacy alignment.json files.
+        #
+        # Y-axis: no MIRROR_Y, no shift — stl_y=0 maps to origin_y (the DEM
+        # clip's north edge). The mesh's actual stl_y_min sits south of that.
+        # north_edge_y always = origin_y; do NOT override from mesh_bbox.
+        self.north_edge_y = origin_y
+        if geom_bbox_crs is not None:
+            self.east_edge_x = float(geom_bbox_crs["maxx"])
+        elif is_mainland and ncols is not None:
             self.east_edge_x = origin_x + ncols * pixel_w
         else:
             self.east_edge_x = origin_x
@@ -398,7 +412,7 @@ class PieceTransform:
             cx = self.east_edge_x - stl_x / self.scale
         else:
             cx = self.origin_x - stl_x / self.scale
-        cy = self.origin_y - stl_y / self.scale
+        cy = self.north_edge_y - stl_y / self.scale
         return cx, cy
 
 
@@ -407,6 +421,10 @@ def piece_transform_from_alignment(
     parameters: Dict[str, Any],
     pixel_w: float,
 ) -> PieceTransform:
+    # Prefer the mesh's actual CRS bbox (recorded by the new driver via
+    # process_country's premirror_bounds_mm); fall back to geom_bbox_crs
+    # (intermediate iteration); then to ncols-based math.
+    bbox = piece_meta.get("mesh_bbox_crs") or piece_meta.get("geom_bbox_crs")
     return PieceTransform(
         origin_x=piece_meta["origin_crs"]["x"],
         origin_y=piece_meta["origin_crs"]["y"],
@@ -415,6 +433,7 @@ def piece_transform_from_alignment(
         is_mainland=bool(piece_meta.get("is_mainland", True)),
         xy_mm_per_pixel=float(parameters.get("XY_MM_PER_PIXEL", 0.5)),
         global_xy_scale=float(parameters.get("GLOBAL_XY_SCALE", 0.33)),
+        geom_bbox_crs=bbox,
     )
 
 
