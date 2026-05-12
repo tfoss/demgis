@@ -22,15 +22,30 @@ against.
 
 ## Principles
 
-1. **Every coast gets a buffer halo.** The country's tile extends a
-   constant width of ocean outward from every coast, regardless of
-   neighbors. Default: **50 km** (config field, overridable per group).
-   This ensures even isolated islands print with a registration margin.
+1. **Archipelago countries opt in to an island-halo for intra-country
+   anchoring.** Default behaviour: **no halo** — country tile is
+   clipped to its NE polygon. Countries whose territory is fragmented
+   across many islands (Japan, Philippines, Indonesia, New Zealand,
+   Chile, etc.) opt in by setting `island_halo_km > 0`. The halo's
+   purpose is **structural anchoring**: it wraps the country's islands
+   into a single connected printable piece (Japan's main islands +
+   Ryukyus, Philippines' 7,000+ islands, Indonesia's 17,000+, NZ's
+   North + South + Stewart). After buffering, **any internal holes
+   in the halo footprint are filled** so the print has no enclosed
+   ocean cavities (Seto Inland Sea, Visayan Sea, etc. become solid
+   ocean fill rather than ring-shaped voids). Default opt-in width:
+   **25 km** (per-country overridable). The historical "every coast
+   gets a 50 km registration halo" rule is retired here, but the
+   underlying apron concept is preserved as a future need for SE
+   Asia / Oceania, where Australia ↔ NZ across the Tasman Sea need a
+   registration anchor beyond what `max_distance_km` can provide
+   (~1,900 km gap). That apron mechanism is separate and TBD.
 
 2. **Extended ocean reaches toward nearby landmass.** When another
    landmass lies within a reasonable distance, the ocean tile extends to
    the neighbor's coast. Default cap: **1000 km** (config field,
-   overridable). Beyond this, only the buffer halo applies.
+   overridable). Beyond this, no ocean unless the island-halo is opted
+   in.
 
 3. **Limit ocean to where it makes geographic sense.** Three negative
    rules:
@@ -53,8 +68,9 @@ against.
 
 5. **Ocean expansion is bounded.** For each country: only the directions
    that have a real neighbor within range get extended ocean. East of
-   Japan (open Pacific for thousands of km) gets buffer-only. West toward
-   Korea/Russia gets extended ocean.
+   Japan (open Pacific for thousands of km) gets nothing if no halo is
+   opted in, or only the archipelago halo if `island_halo_km > 0`. West
+   toward Korea/Russia gets the ownership-rule extended ocean.
 
 ## Ownership rule
 
@@ -98,13 +114,23 @@ per pair without needing per-relationship config.
 For a country A that owns ocean toward a neighbor B (or set of
 neighbors {B₁, B₂, …}):
 
-### Step 1 — Buffer halo
-Compute `halo = A_geom.buffer(buffer_km) - A_geom - other_land_union`.
-This is a constant-width annulus around A's land, with **third-party
-NE land subtracted** so the halo doesn't bleed onto nearby foreign
-territory (e.g. Japan's 50 km halo reaches Sakhalin/Kuril and would
-otherwise overlap Russia). It will be unioned with the extended
-sectors below.
+### Step 1 — Island halo (opt-in)
+
+If `island_halo_km == 0` (the default), skip this step entirely.
+
+If `island_halo_km > 0`:
+
+1. `halo_raw = A_geom.buffer(island_halo_km * 1000)` (km → metres in EE).
+2. **Fill internal holes** in `halo_raw` — reconstruct each polygon
+   component from its exterior ring only, discarding interior rings.
+   This turns enclosed-by-the-archipelago seas (Seto Inland Sea,
+   Visayan Sea, etc.) into solid ocean rather than ring-shaped voids.
+3. Subtract A's own land: `halo = halo_filled - A_geom`.
+4. Subtract third-party NE land: `halo = halo - other_land_union` so
+   the halo doesn't bleed onto nearby foreign territory (e.g. a 25 km
+   Japan halo could otherwise overlap Sakhalin/Kuril).
+
+The result will be unioned with the extended sectors from later steps.
 
 ### Step 2 — Find connectable neighbors
 For each other landmass L in the world (or in a constrained subset for
@@ -184,8 +210,14 @@ class OceanExtension:
     Most members will use the defaults. Knobs exist for cases where the
     algorithm needs nudging."""
 
-    # Universal buffer halo around all coasts. Always applied.
-    buffer_km: float = 50.0
+    # Archipelago anchor halo, opt-in. Default 0 = no halo applied
+    # (country tile clipped to its NE polygon). Set to a positive value
+    # — recommended 25 km, per-country tunable — only for countries
+    # whose territory is fragmented across many islands and needs a
+    # connecting halo to print as a single piece: Japan, Philippines,
+    # Indonesia, NZ, Chile, etc. Internal holes in the resulting halo
+    # footprint are filled automatically (Seto Inland Sea etc.).
+    island_halo_km: float = 0.0
 
     # Max nearest-point distance to a neighbor we extend toward.
     # Beyond this, only the buffer halo applies on that side.
@@ -271,7 +303,7 @@ Then for an A↔B pair:
 When the auto-generated ocean tile looks wrong in the QC PNG:
 
 1. **Tweak global parameters** (`max_distance_km`, `min_neighbor_area_km²`,
-   `buffer_km`) — re-run.
+   `island_halo_km`) — re-run.
 2. **Add to `explicit_neighbors`** if a real neighbor is missing.
 3. **Add to `exclude_neighbors`** if an unwanted neighbor connection is
    appearing.

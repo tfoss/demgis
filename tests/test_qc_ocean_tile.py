@@ -242,27 +242,29 @@ def test_halo_present_passes_for_default_halo(island_a: Polygon, halo_a: Polygon
     """An ext that is exactly the 50 km halo around island_a should pass
     the halo_present check at default coverage_tolerance."""
     result = halo_present(
-        ext_geom=halo_a, member_geom=island_a, buffer_km=50.0,
+        ext_geom=halo_a, member_geom=island_a, island_halo_km=50.0,
     )
     assert result.passed, result.message
     assert result.value["missing_frac"] < 0.01
 
 
-def test_halo_present_fires_when_buffer_set_to_zero(island_a: Polygon):
-    """Deliberate fault: buffer_km=0 produces a guaranteed fail."""
+def test_halo_present_skips_when_halo_opted_out(island_a: Polygon):
+    """New semantics: island_halo_km=0 is the default opt-out for non-
+    archipelago countries; the check should skip, not fail."""
     ext = island_a.buffer(50_000.0).difference(island_a)
     result = halo_present(
-        ext_geom=ext, member_geom=island_a, buffer_km=0.0,
+        ext_geom=ext, member_geom=island_a, island_halo_km=0.0,
     )
-    assert not result.passed
-    assert "≤ 0" in result.message or "<= 0" in result.message or "0" in result.message
+    # Skipped results pass-through by convention; the message names the reason.
+    assert result.passed
+    assert "opt-out" in result.message or "non-archipelago" in result.message
 
 
 def test_halo_present_fires_when_extension_is_empty(island_a: Polygon):
     """Deliberate fault: a missing extension means no halo."""
     empty = Polygon()
     result = halo_present(
-        ext_geom=empty, member_geom=island_a, buffer_km=50.0,
+        ext_geom=empty, member_geom=island_a, island_halo_km=50.0,
     )
     assert not result.passed
     assert result.value["missing_frac"] == 1.0
@@ -274,7 +276,7 @@ def test_halo_present_fires_when_halo_missing_chunks(island_a: Polygon):
     full_halo = island_a.buffer(50_000.0).difference(island_a)
     east_only = full_halo.intersection(box(0.0, -1e7, 1e7, 1e7))
     result = halo_present(
-        ext_geom=east_only, member_geom=island_a, buffer_km=50.0,
+        ext_geom=east_only, member_geom=island_a, island_halo_km=50.0,
     )
     assert not result.passed
     # Missing ~50% of the ring.
@@ -431,7 +433,7 @@ def test_run_all_passes_on_good_group(
             "A": _FakeExtConfig(),
             "B": _FakeExtConfig(),
         },
-        buffer_km_by_member={"A": 50.0, "B": 2.0},
+        island_halo_km_by_member={"A": 50.0, "B": 2.0},
     )
     # All gating checks pass.
     assert report.all_passed, [
@@ -442,21 +444,25 @@ def test_run_all_passes_on_good_group(
     ]
 
 
-def test_run_all_fires_on_orphan_halo_member(
-    island_a: Polygon, island_b: Polygon, halo_a: Polygon
+def test_run_all_skips_halo_when_opted_out(
+    island_a: Polygon, halo_a: Polygon
 ):
-    """Deliberate fault: member with buffer_km=0 ends up with no halo at
-    all — halo_present should fire and bubble up to all_passed=False."""
+    """New semantics: member with island_halo_km=0 is a non-archipelago
+    country — halo_present skips (passes-through) rather than fires.
+
+    The harness should still report all_passed=True for a single-member
+    group where no other checks are flagged."""
     report = run_all_ocean_checks(
         group_name="Solo",
         computed_extensions={"A": halo_a},
         member_geoms_ee={"A": island_a},
-        buffer_km_by_member={"A": 0.0},
+        island_halo_km_by_member={"A": 0.0},
     )
-    assert not report.all_passed
-    assert any(
-        "halo_present" in c.name and not c.passed for c in report.checks
-    )
+    assert report.all_passed
+    # halo_present should show up in the report but with passed=True (skipped).
+    halo_results = [c for c in report.checks if "halo_present" in c.name]
+    assert halo_results, "halo_present should be recorded even when skipped"
+    assert all(c.passed for c in halo_results)
 
 
 def test_run_all_threshold_module_value_present():

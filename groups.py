@@ -123,8 +123,13 @@ class OceanExtension:
     This dataclass is currently a schema-only landing — bead 03.
     """
 
-    # Universal buffer halo around all coasts. Always applied.
-    buffer_km: float = 50.0
+    # Archipelago anchor halo, opt-in. Default 0 = no halo applied
+    # (country tile clipped to its NE polygon). Set to a positive value
+    # — typically 25 km — only for archipelago countries (Japan,
+    # Philippines, Indonesia, NZ, Chile, etc.). The halo's purpose is
+    # structural anchoring of own-country islands, not registration
+    # against foreign neighbours; internal holes are auto-filled.
+    island_halo_km: float = 0.0
 
     # Max nearest-point distance (km) to a neighbor we extend toward. Beyond
     # this, only the buffer halo applies on that side.
@@ -270,6 +275,7 @@ KOREA_JAPAN = CountryGroup(
         "Japan": [
             OceanExtension(
                 explicit_neighbors=["South Korea"],
+                island_halo_km=25.0,   # archipelago: anchors Ryukyus + main islands
             ),
         ],
     },

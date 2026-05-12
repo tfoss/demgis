@@ -21,7 +21,7 @@ Per `MIGRATION_PLAN_DRAFT.md §5c` pilot 2, Sri Lanka is the cleanest *algorithm
 
 ## Deliverables
 
-- New `SRI_LANKA` `CountryGroup` in `groups.py` (single member `"Sri Lanka"`), with `ocean_extensions={"Sri Lanka": [OceanExtension(auto_discover_neighbors=True)]}` — all defaults from the new schema (`buffer_km=50`, `max_distance_km=1000`, `min_neighbor_area_km2=10_000`).
+- New `SRI_LANKA` `CountryGroup` in `groups.py` (single member `"Sri Lanka"`), with `ocean_extensions={"Sri Lanka": [OceanExtension(auto_discover_neighbors=True)]}` — defaults from the new schema (`island_halo_km=0` since Sri Lanka isn't an archipelago, `max_distance_km=1000`, `min_neighbor_area_km2=10_000`). If post-pilot inspection shows the Jaffna offshore islets need anchoring, opt in with a small `island_halo_km` (e.g. 10 km).
 - One-line registration in `GROUPS`.
 - Generated STL under a timestamped `STLs/Sri_Lanka/<UTC-ts>/` directory.
 - QC overlay PNG showing SL land + ocean halo + Palk-Strait sector toward India, per bead 05's harness.

@@ -12,7 +12,9 @@ Five vector-stage gates layered on top of the per-piece / pairwise harness:
   most one side has an extension toward the other. Catches double-owned
   ocean regions.
 * :func:`halo_present` — verifies a member's extension polygon contains
-  a ``buffer_km``-wide ring around every coast of the member geom.
+  the opt-in ``island_halo_km``-wide ring around every coast of the
+  member geom. Skipped when ``island_halo_km == 0`` (the default: no
+  halo applied).
 * :func:`extension_no_disconnected_slivers` — each per-pair sector polygon
   is a single connected component (no MultiPolygons / stripes per the
   "no-stripes" rule in ``OCEAN_TILE_GUIDELINES.md §Principles``).
@@ -447,37 +449,45 @@ def ownership_unique(
 def halo_present(
     ext_geom: BaseGeometry,
     member_geom: BaseGeometry,
-    buffer_km: float,
+    island_halo_km: float,
     *,
     member_name: str = "",
     coverage_tolerance: float = 0.05,
 ) -> QCResult:
-    """Verify ``ext_geom`` contains a ``buffer_km``-wide halo around
-    every coast of ``member_geom``.
+    """Verify ``ext_geom`` contains an ``island_halo_km``-wide halo
+    around every coast of ``member_geom``.
 
-    Expected halo = ``member_geom.buffer(buffer_m) - member_geom``.
+    The halo is **opt-in**: when ``island_halo_km == 0`` (the default,
+    for non-archipelago countries) the check is skipped — no halo is
+    expected. When ``island_halo_km > 0`` (archipelago countries:
+    Japan, Philippines, Indonesia, NZ, Chile, etc.), the check
+    enforces that the extension geometry covers the expected ring.
+
+    Expected halo = ``member_geom.buffer(island_halo_km * 1000) - member_geom``.
     Pass iff ``expected_halo.difference(ext_geom).area / expected_halo.area
     < coverage_tolerance``.
-
-    ``buffer_km`` is in km (matches ``OceanExtension.buffer_km``);
-    converted to metres inside.
     """
     name = f"halo_present[{member_name}]" if member_name else "halo_present"
 
     if member_geom is None or member_geom.is_empty:
         return QCResult.skipped(name, "member geom is empty")
-    if buffer_km <= 0:
+    if island_halo_km == 0:
+        return QCResult.skipped(
+            name,
+            "island_halo_km = 0 (opt-out — non-archipelago country)",
+        )
+    if island_halo_km < 0:
         return QCResult(
             name=name, passed=False,
-            value={"buffer_km": buffer_km},
-            threshold={"buffer_km_min_gt": 0,
+            value={"island_halo_km": island_halo_km},
+            threshold={"island_halo_km_min_ge": 0,
                        "missing_frac_max": coverage_tolerance},
             message=(
-                f"buffer_km = {buffer_km} ≤ 0 — halo cannot be present"
+                f"island_halo_km = {island_halo_km} < 0 — invalid configuration"
             ),
         )
 
-    buffer_m = buffer_km * 1000.0
+    buffer_m = island_halo_km * 1000.0
     expected_halo = member_geom.buffer(buffer_m).difference(member_geom)
     if expected_halo.is_empty:
         return QCResult.skipped(name, "expected halo is empty (degenerate member)")
@@ -486,7 +496,7 @@ def halo_present(
         return QCResult(
             name=name, passed=False,
             value={
-                "buffer_km": buffer_km,
+                "island_halo_km": island_halo_km,
                 "expected_halo_area_m2": float(expected_halo.area),
                 "missing_frac": 1.0,
             },
@@ -503,7 +513,7 @@ def halo_present(
         name=name,
         passed=passed,
         value={
-            "buffer_km": buffer_km,
+            "island_halo_km": island_halo_km,
             "expected_halo_area_m2": halo_area,
             "missing_area_m2": missing_area,
             "missing_frac": frac,
@@ -684,7 +694,7 @@ def run_all_ocean_checks(
         Mapping[str, Mapping[str, BaseGeometry]]
     ] = None,
     ocean_configs: Optional[Mapping[str, Any]] = None,
-    buffer_km_by_member: Optional[Mapping[str, float]] = None,
+    island_halo_km_by_member: Optional[Mapping[str, float]] = None,
     global_xy_scale: float = 0.33,
     prior_override_record: Optional[Dict[str, Any]] = None,
 ) -> QCReport:
@@ -713,12 +723,12 @@ def run_all_ocean_checks(
     ocean_configs
         ``{member -> OceanExtension instance}``. Optional. Drives the
         ``override_polygon_provenance`` and ``halo_present`` checks
-        (the latter pulls ``buffer_km`` from here when
-        ``buffer_km_by_member`` is not given).
-    buffer_km_by_member
+        (the latter pulls ``island_halo_km`` from here when
+        ``island_halo_km_by_member`` is not given).
+    island_halo_km_by_member
         ``{member -> halo radius in km}``. Optional override for the
-        halo check; falls back to ``ocean_configs[member].buffer_km``,
-        then to 50.0 (the schema default).
+        halo check; falls back to ``ocean_configs[member].island_halo_km``,
+        then to 0.0 (the schema default — no halo, check skipped).
     global_xy_scale
         Used to convert the print-mm-space seam threshold to CRS m.
         Defaults to 0.33 — matches the pipeline's canonical value.
@@ -774,21 +784,23 @@ def run_all_ocean_checks(
     report.add(ownership_unique(group_name, computed_extensions))
 
     # ---------- Check 3: halo present (per member) -------------------------
+    # Skipped for members with island_halo_km == 0 (the default — no halo
+    # expected, no archipelago anchoring needed).
     for member, mg in member_geoms_ee.items():
         ext = computed_extensions.get(member)
         if ext is None:
             continue
-        buf_km: Optional[float] = None
-        if buffer_km_by_member is not None:
-            buf_km = buffer_km_by_member.get(member)
-        if buf_km is None and ocean_configs is not None:
+        halo_km: Optional[float] = None
+        if island_halo_km_by_member is not None:
+            halo_km = island_halo_km_by_member.get(member)
+        if halo_km is None and ocean_configs is not None:
             cfg = ocean_configs.get(member)
             if cfg is not None:
-                buf_km = getattr(cfg, "buffer_km", None)
-        if buf_km is None:
-            buf_km = 50.0
+                halo_km = getattr(cfg, "island_halo_km", None)
+        if halo_km is None:
+            halo_km = 0.0
         report.add(halo_present(
-            ext_geom=ext, member_geom=mg, buffer_km=buf_km,
+            ext_geom=ext, member_geom=mg, island_halo_km=halo_km,
             member_name=member,
         ))
 

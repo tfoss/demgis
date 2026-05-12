@@ -207,7 +207,7 @@ Every country tile gets a constant **buffer halo** (default 50 km) around all it
 
 ### 5b. Schema and algorithm — see `OCEAN_TILE_GUIDELINES.md`
 
-The current `OceanExtension(bbox=...)` in `groups.py:63` is bbox-only; the guidelines replace it with an `OceanExtension` carrying `buffer_km`, `max_distance_km`, `min_neighbor_area_km2`, `auto_discover_neighbors`, `explicit_neighbors`, `exclude_neighbors`, `per_neighbor` overrides, and an `override_polygon` last-resort escape hatch. The algorithm (convex-hull outer tangents → coastline tracing between tangent points → union with halo) lives in `OCEAN_TILE_GUIDELINES.md §Algorithm`.
+The current `OceanExtension(bbox=...)` in `groups.py:63` is bbox-only; the guidelines replace it with an `OceanExtension` carrying `island_halo_km` (opt-in archipelago anchor, default 0), `max_distance_km`, `min_neighbor_area_km2`, `auto_discover_neighbors`, `explicit_neighbors`, `exclude_neighbors`, `per_neighbor` overrides, and an `override_polygon` last-resort escape hatch. The algorithm (convex-hull outer tangents → coastline tracing between tangent points → union with halo) lives in `OCEAN_TILE_GUIDELINES.md §Algorithm`.
 
 Two reviewer concerns are resolved by the guidelines as written:
 - **Hand-traced SCS-style polygons**: the `override_polygon` field is the explicit escape hatch.
@@ -235,7 +235,7 @@ Note on §3↔§5 shared-origin coupling: §3 hypothesises LCC obsoletes the sha
 Layered on §4 — these checks gate the new ocean tile pipeline:
 - `seam_consistency` — for **each** island↔continental neighbour pair, the corresponding sector polygon's far-side boundary and that continental tile's clipped coastline agree within 0.2 mm in print mm-space. Runs per pair, so a multi-neighbour pilot like Great Britain produces four independent checks (GB↔France, GB↔Belgium, GB↔NL, plus the island↔island GB↔Ireland). **Measured on the vector polygons before rasterization**, not against the DEM grid: shared NE source + identical `VECTOR_SIMPLIFY_DEGREES` guarantees vertex-level agreement, so 0.2 mm (~0.6 m in CRS at `GLOBAL_XY_SCALE=0.33`) is testing processing consistency, not sub-pixel DEM precision. Catches the failure mode where one piece is regenerated with a different simplification value or routed through a different CRS chain than its neighbour — those manifest as 10s–100s of mm of drift, well above threshold. Loosen later only if real processing variation forces it.
 - `ownership_unique` — for every landmass pair in a group, exactly one side has an `OceanExtension` toward the other. No double-owned, no orphan seams.
-- `halo_present` — `buffer_km` halo geometry exists in every tile's clipped vector. Catches accidental empty-halo regressions.
+- `halo_present` — for archipelago countries that opt in to `island_halo_km > 0`, the halo ring exists in the tile's clipped vector. Skipped (no-op) for the default `island_halo_km = 0` (most countries).
 - `extension_no_disconnected_slivers` — the per-pair sector polygon has a single connected component (the no-stripes rule from `OCEAN_TILE_GUIDELINES.md §Principles`).
 - `override_polygon_provenance` — when a member uses `override_polygon`, its qc.json records the polygon's vertex count and SHA so regressions are obvious.
 

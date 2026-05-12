@@ -37,8 +37,12 @@ inherit their parent's class.
 
 Notes on the schema:
 
-* ``OceanExtension.buffer_km`` is the universal halo applied to A's
-  full coast.
+* ``OceanExtension.island_halo_km`` is the archipelago anchor halo,
+  opt-in (default 0). Only applied when > 0; intended for countries
+  whose territory is fragmented across many islands (Japan, Philippines,
+  Indonesia, NZ, Chile, etc.). Internal holes in the buffered footprint
+  are filled before the halo is unioned, so enclosed seas (Seto Inland
+  Sea, Visayan Sea, etc.) become solid ocean fill rather than voids.
 * ``max_distance_km`` / ``min_neighbor_area_km2`` are the global filters
   for the auto-discovery path.
 * ``auto_discover_neighbors=False`` confines neighbours to
@@ -117,6 +121,23 @@ def _components(geom: BaseGeometry) -> list[Polygon]:
     if isinstance(geom, MultiPolygon):
         return list(geom.geoms)
     return []
+
+
+def _fill_internal_holes(geom: BaseGeometry) -> BaseGeometry:
+    """Return ``geom`` with all interior rings discarded.
+
+    For an archipelago's buffer halo, this turns enclosed seas (Seto
+    Inland Sea, Visayan Sea, etc.) — which appear as interior holes in
+    the merged-buffer footprint — into solid ocean. The resulting
+    geometry has the same outer envelope but no internal voids.
+    """
+    if geom.is_empty:
+        return geom
+    if isinstance(geom, Polygon):
+        return Polygon(geom.exterior)
+    if isinstance(geom, MultiPolygon):
+        return MultiPolygon([Polygon(p.exterior) for p in geom.geoms])
+    return geom
 
 
 def _decompose_by_area(
@@ -429,7 +450,8 @@ def compute_ocean_extension(
 
     The returned geometry is the union of:
 
-    * A's buffer halo (``buffer_km`` outward from A's coast), and
+    * A's island halo (``island_halo_km`` outward from A's coast, with
+      internal holes filled) when ``island_halo_km > 0``, and
     * one sector polygon per qualifying neighbour, with A's own land
       already subtracted (step 3.5) and third-party NE land subtracted
       (step 3.6).
@@ -502,10 +524,16 @@ def compute_ocean_extension(
             per_extension_polygons.append(poly)
             continue
 
-        # ---- Step 1: buffer halo around A's full geom.
-        halo = A_full.buffer(ext.buffer_km * 1000.0).difference(A_full)
-        if not halo.is_valid:
-            halo = make_valid(halo)
+        # ---- Step 1: archipelago island halo around A's full geom.
+        # Opt-in: skip entirely when island_halo_km == 0 (the default).
+        if ext.island_halo_km > 0:
+            halo_raw = A_full.buffer(ext.island_halo_km * 1000.0)
+            halo_filled = _fill_internal_holes(halo_raw)
+            halo = halo_filled.difference(A_full)
+            if not halo.is_valid:
+                halo = make_valid(halo)
+        else:
+            halo = Polygon()  # empty — no halo contribution
 
         # ---- Step 2: neighbour discovery.
         neighbour_names = _discover_neighbour_names(

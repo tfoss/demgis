@@ -26,7 +26,7 @@ Ocean tiles introduce failure modes that the existing per-piece `qc/` harness ca
 
 - `seam_consistency` fires on a deliberate `VECTOR_SIMPLIFY_DEGREES` mismatch between an island and its continental neighbour in a synthetic test group.
 - `ownership_unique` fires when two members of a group both carry an extension toward each other, and when a pair has zero extensions where one is required by the ownership rule.
-- `halo_present` fires when a member's clipped vector is missing the `buffer_km` halo geometry (e.g. halo radius accidentally set to 0).
+- `halo_present` fires when a member opting in to `island_halo_km > 0` has a missing halo ring in its extension. Skips (no-op pass) when `island_halo_km == 0` — the default for non-archipelago countries.
 - `extension_no_disconnected_slivers` fires on a sector polygon with > 1 connected component (stripes from a coastline-tracing bug).
 - `override_polygon_provenance` records `vertex_count` and a SHA-256 of WKB for each `override_polygon` member, and fires if either is missing from the qc record.
 - Running `make_country_group.py --group Sri_Lanka --qc-strict` on a known-good pilot exits 0; injecting any one fault above flips it to exit 1.

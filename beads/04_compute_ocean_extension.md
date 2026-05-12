@@ -43,7 +43,7 @@ QC checks (`seam_consistency`, `ownership_unique`, `halo_present`, `extension_no
 
 **The algorithm runs in Equal Earth (`EPSG:8857`) throughout.** NE polygons are reprojected from WGS84 to EE once at driver startup (in bead 01, before the STRtree is built); all distance, buffer, hull, tangent, and tracing operations in beads 02 + 04 operate on EE geometries; the orchestrator returns an EE polygon. The existing `bridge_polys_crs_by_member` mechanism already consumes per-CRS polygons, so this slots in without a new pipeline path.
 
-Rationale: `buffer_km` and `max_distance_km` require a meter-based CRS; EE is global (handles cross-region pairs without zone-stitching) and is the project's target STL CRS, so no second reprojection is needed at handoff. EE's equal-area-not-conformal distortion (~few % at country scale) is well within the algorithm's threshold-heuristic tolerance.
+Rationale: `island_halo_km` and `max_distance_km` require a meter-based CRS; EE is global (handles cross-region pairs without zone-stitching) and is the project's target STL CRS, so no second reprojection is needed at handoff. EE's equal-area-not-conformal distortion (~few % at country scale) is well within the algorithm's threshold-heuristic tolerance.
 
 CRS-code correction: earlier drafts (and the original §5b text) referenced `ESRI:54052`. In pyproj that code resolves to `World_Goode_Homolosine_Land`, not Equal Earth. The correct EPSG code is `EPSG:8857`, verified during bead 01's implementation against the existing `pilot_2km_eqearth.tif`.
 

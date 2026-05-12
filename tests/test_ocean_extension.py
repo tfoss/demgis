@@ -272,7 +272,7 @@ def test_ownership_korea_does_not_get_sector_to_japan(bundle, ne_ee):
     ext = OceanExtension(
         explicit_neighbors=["Japan"],
         auto_discover_neighbors=False,   # focus the test
-        buffer_km=50.0,
+        island_halo_km=50.0,
     )
     a_full = _ne_geom(ne_ee, "South Korea")
     names = oxt._discover_neighbour_names(
@@ -343,12 +343,12 @@ def test_auto_discover_false_confines_to_explicit(bundle, ne_ee):
             "Japan": [OceanExtension(
                 auto_discover_neighbors=False,
                 explicit_neighbors=[],
-                buffer_km=20.0,
+                island_halo_km=20.0,
             )],
         },
     )
     result = oxt.compute_ocean_extension("Japan", group, ne_ee, bundle)
-    # Halo-only: area ~= perimeter * buffer_km. Japan's coastline is
+    # Halo-only: area ~= perimeter * island_halo_km. Japan's coastline is
     # huge but bounded; halo area must be much smaller than a sector
     # polygon stretching west to Korea. We use a loose upper bound:
     # halo area < area of bbox-buffer of Japan's bbox. Conservative
