@@ -305,6 +305,23 @@ CUBA = CountryGroup(
 )
 
 
+# Land-only Madagascar — single elongated landmass with elevation
+# variation (central highlands, ~2876 m at Maromokotro). At scale 0.33
+# it's ~495 mm long, naturally needing 2–3 pieces, with cross-section
+# wide enough (~200 km) that dovetail features land in the 15–25 mm
+# range — much more representative of production-scale splits than
+# Cuba's 38 mm. Used as the bead 11 print-test PoC target.
+MADAGASCAR = CountryGroup(
+    name="Madagascar",
+    members=["Madagascar"],
+    notes="Land-only Madagascar for bead 11 dovetail print-test. ~1500 km "
+          "long, single landmass, single-country (Madagascar is naturally "
+          "an island country with no land borders, but we don't need ocean "
+          "extensions for the PoC — those would come with a future "
+          "Madagascar tile group if it joined a multi-country group).",
+)
+
+
 # Registry: command-line `--group NAME` looks this up.
 GROUPS: dict[str, CountryGroup] = {
     "UK_Ireland":       UK_IRELAND,
@@ -312,4 +329,7 @@ GROUPS: dict[str, CountryGroup] = {
     "Tierra_del_Fuego": TIERRA_DEL_FUEGO,
     "Korea_Japan":      KOREA_JAPAN,
     "Cuba":             CUBA,
+    "Madagascar":       MADAGASCAR,
+    "France":           CountryGroup(name="France", members=["France"]),
+    "Germany":          CountryGroup(name="Germany", members=["Germany"]),
 }
