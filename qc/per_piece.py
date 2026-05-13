@@ -396,19 +396,34 @@ class PieceTransform:
         # supplied (new driver pipeline), use it. Fall back to ncols-based
         # math for ocean tiles or legacy alignment.json files.
         #
-        # Y-axis: no MIRROR_Y, no shift — stl_y=0 maps to origin_y (the DEM
-        # clip's north edge). The mesh's actual stl_y_min sits south of that.
-        # north_edge_y always = origin_y; do NOT override from mesh_bbox.
-        self.north_edge_y = origin_y
+        # Y-axis: stl_y=0 maps to the mesh's north edge in CRS. For single-
+        # piece members this is approximately origin_y (the DEM clip's
+        # north edge, within mesh smoothing margin). For sub-pieces from
+        # country_split.py's component split, each sub-piece has been re-
+        # origined and its own mesh_bbox_crs.maxy is the right anchor —
+        # using the parent's origin_y would mis-place outlying components
+        # (French Guiana at +736 km N gets dragged to +6,095 km N if we
+        # use France's full-DEM origin_y). When mesh_bbox_crs is supplied,
+        # prefer its maxy; fall back to origin_y for legacy alignment.json.
+        self._has_bbox = geom_bbox_crs is not None
         if geom_bbox_crs is not None:
             self.east_edge_x = float(geom_bbox_crs["maxx"])
+            self.north_edge_y = float(geom_bbox_crs["maxy"])
         elif is_mainland and ncols is not None:
             self.east_edge_x = origin_x + ncols * pixel_w
+            self.north_edge_y = origin_y
         else:
             self.east_edge_x = origin_x
+            self.north_edge_y = origin_y
 
     def stl_to_crs(self, stl_x: float, stl_y: float) -> Tuple[float, float]:
-        if self.is_mainland:
+        # When mesh_bbox_crs (= geom_bbox_crs) is supplied, east_edge_x
+        # already reflects the actual mesh's eastern extent in CRS —
+        # use it regardless of is_mainland. Without mesh_bbox_crs (old
+        # ocean-tile flow), is_mainland=False falls back to origin_x.
+        # The old branch is_mainland=False / origin_x is preserved only
+        # for legacy callers that don't populate mesh_bbox_crs.
+        if self.is_mainland or self._has_bbox:
             cx = self.east_edge_x - stl_x / self.scale
         else:
             cx = self.origin_x - stl_x / self.scale
