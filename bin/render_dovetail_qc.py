@@ -92,7 +92,7 @@ for col_idx, (label, lpath, rpath) in enumerate(variants):
             ax.set_xlabel("X (mm)")
 
 fig.suptitle("Cuba dovetail PoC — full-Z prism (matches BambuStudio), "
-             "3 mm base / 5 mm tip (1.67× flare), 4 mm depth",
+             "3 mm base / 5 mm tip (1.67× flare), 1.5 mm depth",
              fontsize=12, y=0.995)
 
 fig.legend(handles=[
