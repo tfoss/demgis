@@ -80,6 +80,7 @@ def build_splitter_solid(
     tab_depth_mm: float,
     clearance_mm: float = 0.0,
     perp_mid_override: float | None = None,
+    base_only_z_max: float | None = None,
 ) -> trimesh.Trimesh:
     """Build a prism that occupies the half-space {cut_axis < cut_coord},
     with a dovetail tab protruding into the OTHER half along +cut_axis.
@@ -154,9 +155,47 @@ def build_splitter_solid(
     poly = Polygon(outline_xy)
     assert poly.is_valid, "splitter outline is not a valid polygon"
 
-    prism = trimesh.creation.extrude_polygon(poly, height=z_hi - z_lo)
-    prism.apply_translation([0.0, 0.0, z_lo])
-    return prism
+    if base_only_z_max is None:
+        # Original behaviour: dovetail through full mesh height.
+        prism = trimesh.creation.extrude_polygon(poly, height=z_hi - z_lo)
+        prism.apply_translation([0.0, 0.0, z_lo])
+        return prism
+
+    # Base-only dovetail: the dovetail-shaped prism only exists up to
+    # base_only_z_max (typically the base slab top, z=2 mm). Above that,
+    # the splitter is just a plain half-space at the cut plane — the
+    # terrain above the base meets at a clean vertical cut, no joint
+    # geometry. This forces the pieces to assemble by sliding together
+    # along the cut plane (rather than Z-dropping), and the terrain above
+    # the base then locks them against Z-lift (each piece's terrain
+    # half rests on the other's base at the seam).
+    dovetail_prism = trimesh.creation.extrude_polygon(
+        poly, height=base_only_z_max - z_lo,
+    )
+    dovetail_prism.apply_translation([0.0, 0.0, z_lo])
+
+    # Above z=base_only_z_max: plain half-space rectangle (no tab).
+    if cut_axis == "x":
+        plain_outline = [
+            (xmin - pad, perp_lo - pad),
+            (cut_coord,  perp_lo - pad),
+            (cut_coord,  perp_hi + pad),
+            (xmin - pad, perp_hi + pad),
+        ]
+    else:
+        plain_outline = [
+            (perp_lo - pad, ymin - pad),
+            (perp_hi + pad, ymin - pad),
+            (perp_hi + pad, cut_coord),
+            (perp_lo - pad, cut_coord),
+        ]
+    plain_prism = trimesh.creation.extrude_polygon(
+        Polygon(plain_outline), height=z_hi - base_only_z_max,
+    )
+    plain_prism.apply_translation([0.0, 0.0, base_only_z_max])
+
+    combined = dovetail_prism.union(plain_prism, engine="manifold")
+    return combined
 
 
 def _cross_section_perp_range(
@@ -216,6 +255,7 @@ def split_with_dovetail(
     tab_depth_mm: float = DEFAULT_TAB_DEPTH_MM,
     clearance_mm: float = DEFAULT_CLEARANCE_MM,
     keep_largest: bool = False,
+    base_only_z_max: float | None = None,
 ) -> tuple[trimesh.Trimesh, trimesh.Trimesh]:
     """Return (tab_piece, slot_piece). Tab piece is the half whose tab juts
     into the slot piece's territory.
@@ -267,6 +307,7 @@ def split_with_dovetail(
         mesh.bounds, cut_axis, cut_coord,
         tab_base_mm, tab_tip_mm, tab_depth_mm, clearance_mm=0.0,
         perp_mid_override=perp_mid_override,
+        base_only_z_max=base_only_z_max,
     )
     # Slot piece = mesh − splitter_loose  (the ">cut" half, with a slightly
     # oversized slot carved out where the tab sits)
@@ -274,6 +315,7 @@ def split_with_dovetail(
         mesh.bounds, cut_axis, cut_coord,
         tab_base_mm, tab_tip_mm, tab_depth_mm, clearance_mm=clearance_mm,
         perp_mid_override=perp_mid_override,
+        base_only_z_max=base_only_z_max,
     )
 
     t0 = time.perf_counter()
@@ -357,6 +399,14 @@ def main() -> int:
                     help="After the cut, drop disconnected components on "
                          "each side (small offshore islands etc.) so each "
                          "output STL is a single connected piece.")
+    ap.add_argument("--base-only-z-max", type=float, default=None,
+                    help="Confine the dovetail shape to z < this value "
+                         "(typically the base slab top, 2 mm). Above this "
+                         "z, the cut is a plain vertical plane. With this, "
+                         "the pieces assemble by sliding along the cut "
+                         "plane on the build plate; terrain above the "
+                         "base then resists Z-lift. Omit for a full-height "
+                         "dovetail prism (assemble by Z-lowering).")
     args = ap.parse_args()
 
     if args.synthetic:
@@ -381,6 +431,7 @@ def main() -> int:
         tab_depth_mm=args.tab_depth_mm,
         clearance_mm=args.clearance_mm,
         keep_largest=args.keep_largest,
+        base_only_z_max=args.base_only_z_max,
     )
     t_split = time.perf_counter() - t0
     print(f"split total: {t_split:.2f} s")

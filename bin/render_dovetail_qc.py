@@ -1,37 +1,46 @@
-"""Render a QC PNG of the Cuba dovetail PoC STLs.
+"""Render QC PNG of the Cuba dovetail PoC STLs.
 
-Top-down (Z-axis) projection of the base-slab footprint of each piece,
-in the mesh's NATIVE world coordinates. We pick all triangles whose
-centroid lies in the lower half of the base slab (z < 1 mm) and union
-their XY-projections via shapely. That gives the true 2D footprint
-without trimesh's section-plane local-frame transform getting in the
-way.
+Shows two z-slices per clearance variant:
+* Base slab (z=0.5, within z=0–2 base): the dovetail interlock is here.
+* Terrain (z=2.5+): pieces meet at a clean vertical cut with no joint
+  geometry, allowing assembly to happen by sliding along the cut plane
+  on the build plate.
+
+Uses trimesh.section(...).discrete to get curves in world XY coords
+(to_planar() returns a local frame that misaligns the overlay).
 """
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import numpy as np
 import trimesh
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
 
-def base_footprint_xy(mesh, z_max=1.0):
-    """Project base-slab triangles to XY, union into a shapely polygon
-    in the mesh's world coordinates."""
-    centroids = mesh.triangles_center
-    mask = centroids[:, 2] < z_max
-    tris = mesh.triangles[mask]
+def section_polygons_world(mesh, z):
+    """Section mesh at z, return shapely Polygons in world XY coords."""
+    sec = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
+    if sec is None:
+        return []
     polys = []
-    for t in tris:
-        p = Polygon(t[:, :2])
-        if p.is_valid and p.area > 0:
-            polys.append(p)
+    for curve in sec.discrete:
+        c = np.asarray(curve)
+        if c.shape[0] < 4:
+            continue
+        p = Polygon(c[:, :2])
+        if not p.is_valid:
+            continue
+        if p.area < 0.01:
+            continue
+        polys.append(p)
     if not polys:
         return None
     return unary_union(polys)
 
 
-def plot_polygon(ax, geom, *, facecolor, edgecolor, alpha=0.4, lw=0.8):
-    """Plot a shapely Polygon / MultiPolygon."""
+def plot_polygon(ax, geom, *, facecolor, edgecolor, alpha=0.45, lw=0.8):
+    if geom is None:
+        return
     parts = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
     for poly in parts:
         x, y = poly.exterior.xy
@@ -44,48 +53,59 @@ def plot_polygon(ax, geom, *, facecolor, edgecolor, alpha=0.4, lw=0.8):
 
 
 variants = [
-    ("clear=0.0 mm (tight, Bambu-like)",
+    ("clear=0.0 mm",
      "/workspace/docs/dovetail_split_poc_cuba_clear00_left.stl",
      "/workspace/docs/dovetail_split_poc_cuba_clear00_right.stl"),
-    ("clear=0.2 mm (loose)",
+    ("clear=0.2 mm",
      "/workspace/docs/dovetail_split_poc_cuba_clear02_left.stl",
      "/workspace/docs/dovetail_split_poc_cuba_clear02_right.stl"),
 ]
 
-fig, axes = plt.subplots(2, 1, figsize=(14, 7))
+fig, axes = plt.subplots(2, 2, figsize=(16, 8),
+                         sharex="col", sharey="row")
 
-for ax, (label, lpath, rpath) in zip(axes, variants):
+slabs = [
+    ("base slab (z=0.5) — DOVETAIL VISIBLE", 0.5),
+    ("terrain (z=2.5) — CLEAN VERTICAL CUT", 2.5),
+]
+
+for col_idx, (label, lpath, rpath) in enumerate(variants):
     left = trimesh.load(lpath)
     right = trimesh.load(rpath)
+    for row_idx, (slab_label, z) in enumerate(slabs):
+        ax = axes[row_idx, col_idx]
+        left_fp = section_polygons_world(left, z)
+        right_fp = section_polygons_world(right, z)
+        plot_polygon(ax, left_fp, facecolor="#2ca02c", edgecolor="#1a661a")
+        plot_polygon(ax, right_fp, facecolor="#9467bd", edgecolor="#5a3a82")
+        ax.axvline(x=19.06, color="red", linestyle=":", linewidth=0.7)
+        if row_idx == 0:
+            ax.axhline(y=1.98, color="orange", linestyle=":", linewidth=0.5)
+            ax.axhline(y=8.62, color="orange", linestyle=":", linewidth=0.5)
+            ax.axhline(y=5.30, color="orange", linestyle="-", linewidth=0.7)
+        ax.set_title(f"{label}  —  {slab_label}", fontsize=10)
+        ax.set_aspect("equal")
+        ax.grid(alpha=0.3)
+        if col_idx == 0:
+            ax.set_ylabel("Y (mm)")
+        if row_idx == 1:
+            ax.set_xlabel("X (mm)")
 
-    left_fp = base_footprint_xy(left)
-    right_fp = base_footprint_xy(right)
-
-    plot_polygon(ax, left_fp, facecolor="#2ca02c", edgecolor="#2ca02c")
-    plot_polygon(ax, right_fp, facecolor="#9467bd", edgecolor="#9467bd")
-
-    # Reference annotations: cut line + cross-section perp bounds at cut
-    ax.axvline(x=19.06, color="red", linestyle=":", linewidth=0.8)
-    ax.axhline(y=1.98, color="orange", linestyle=":", linewidth=0.6)
-    ax.axhline(y=8.62, color="orange", linestyle=":", linewidth=0.6)
-    ax.axhline(y=5.30, color="orange", linestyle="-", linewidth=0.8)
-
-    ax.set_title(f"Cuba dovetail PoC — {label}", fontsize=11)
-    ax.set_aspect("equal")
-    ax.grid(alpha=0.3)
-    ax.set_xlabel("X (mm)")
-    ax.set_ylabel("Y (mm)")
+fig.suptitle("Cuba dovetail PoC — base-only dovetail, "
+             "3 mm base / 5 mm tip (1.67× flare), 4 mm depth",
+             fontsize=12, y=0.995)
 
 fig.legend(handles=[
-    mpatches.Patch(facecolor="#2ca02c", alpha=0.40, label="Tab piece (left)"),
-    mpatches.Patch(facecolor="#9467bd", alpha=0.40, label="Slot piece (right)"),
+    mpatches.Patch(facecolor="#2ca02c", alpha=0.45, label="Tab piece (left)"),
+    mpatches.Patch(facecolor="#9467bd", alpha=0.45, label="Slot piece (right)"),
     mpatches.Patch(facecolor="none", edgecolor="red", linestyle=":",
                    label="cut line x=19.06"),
-    mpatches.Patch(facecolor="none", edgecolor="orange", linestyle="-",
-                   label="cross-section midline Y=5.30"),
-], loc="upper center", ncol=4, bbox_to_anchor=(0.5, 1.02))
+    mpatches.Patch(facecolor="none", edgecolor="orange",
+                   label="cross-section perp bounds"),
+], loc="lower center", ncol=4, bbox_to_anchor=(0.5, -0.02))
 
-fig.tight_layout(rect=[0, 0, 1, 0.96])
+fig.tight_layout(rect=[0, 0.04, 1, 0.96])
+
 out = "/workspace/docs/dovetail_split_poc_cuba_outlines.png"
 fig.savefig(out, dpi=120, bbox_inches="tight")
 print(f"wrote {out}")
