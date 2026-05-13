@@ -205,16 +205,7 @@ def _cross_section_perp_range(
     slab_mm: float = 0.5,
 ) -> tuple[float, float] | None:
     """Find the perpendicular-axis range where the mesh has material at
-    the cut plane. Returns (perp_min, perp_max) or None if the cut plane
-    doesn't intersect any material.
-
-    Without this, the dovetail tab is centred on the full mesh bbox
-    midpoint — but for irregular shapes (Cuba's elongated banana, Chile's
-    long thin profile, etc.) the country's actual cross-section at the
-    cut line is offset from the bbox midpoint. Placing the tab on the
-    bbox midpoint leaves part of the tab in mid-air, where the boolean
-    intersection produces no material, and the joint becomes a half-tab
-    nubbin rather than a proper dovetail.
+    the cut plane. Returns (perp_min, perp_max) or None.
     """
     axis_idx = 0 if cut_axis == "x" else 1
     perp_idx = 1 - axis_idx
@@ -224,6 +215,51 @@ def _cross_section_perp_range(
     if len(near) == 0:
         return None
     return float(near[:, perp_idx].min()), float(near[:, perp_idx].max())
+
+
+def _constrained_perp_range_over_depth(
+    mesh: trimesh.Trimesh,
+    cut_axis: str,
+    cut_coord: float,
+    tab_depth_mm: float,
+    n_samples: int = 7,
+    slab_mm: float = 0.5,
+) -> tuple[float, float] | None:
+    """Find the most-restrictive perp-axis range across the entire tab
+    depth window [cut_coord, cut_coord + tab_depth_mm].
+
+    Without this, the tab is placed using the cross-section at the cut
+    line only. But for curving coastlines (Cuba's banana, Chile's thin
+    profile), the country's coast can shift south or north as you go
+    deeper into the tab area — leaving thin "shoulder" material on one
+    side of the slot cavity. The constrained range is the intersection
+    of every cross-section across the tab depth; placing the tab inside
+    it guarantees the slot piece has the same minimum shoulder margin
+    on both sides along the full tab depth.
+
+    Returns (perp_min_constrained, perp_max_constrained), or None if
+    no material is found.
+    """
+    axis_idx = 0 if cut_axis == "x" else 1
+    perp_idx = 1 - axis_idx
+    sample_coords = np.linspace(cut_coord, cut_coord + tab_depth_mm, n_samples)
+    perp_min_constrained = -np.inf
+    perp_max_constrained = np.inf
+    found_any = False
+    for c in sample_coords:
+        near = mesh.vertices[
+            np.abs(mesh.vertices[:, axis_idx] - c) < slab_mm
+        ]
+        if len(near) == 0:
+            continue
+        found_any = True
+        perp_min_constrained = max(perp_min_constrained,
+                                   float(near[:, perp_idx].min()))
+        perp_max_constrained = min(perp_max_constrained,
+                                   float(near[:, perp_idx].max()))
+    if not found_any:
+        return None
+    return perp_min_constrained, perp_max_constrained
 
 
 def _keep_largest_component(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
@@ -256,6 +292,7 @@ def split_with_dovetail(
     clearance_mm: float = DEFAULT_CLEARANCE_MM,
     keep_largest: bool = False,
     base_only_z_max: float | None = None,
+    min_shoulder_mm: float = 3.0,
 ) -> tuple[trimesh.Trimesh, trimesh.Trimesh]:
     """Return (tab_piece, slot_piece). Tab piece is the half whose tab juts
     into the slot piece's territory.
@@ -277,41 +314,45 @@ def split_with_dovetail(
     # the tab is centred on the cross-section midpoint rather than the
     # bbox midpoint (which would leave part of the tab in mid-air for
     # irregular country shapes).
-    section = _cross_section_perp_range(mesh, cut_axis, cut_coord)
-    if section is None:
-        print(f"  WARNING: no mesh material at cut={cut_coord:.2f}; "
-              f"falling back to bbox-midpoint placement")
+    # Constrained cross-section: the perp range available consistently
+    # across the entire tab depth window. The slot cavity must fit
+    # inside this AND leave at least min_shoulder_mm of material on
+    # each side along every X within the tab depth.
+    constrained = _constrained_perp_range_over_depth(
+        mesh, cut_axis, cut_coord, tab_depth_mm,
+    )
+    if constrained is None:
+        print(f"  WARNING: no mesh material across [{cut_coord:.2f}, "
+              f"{cut_coord + tab_depth_mm:.2f}]; falling back to "
+              f"bbox-midpoint placement")
         perp_mid_override = None
-        section_width = None
     else:
-        perp_lo, perp_hi = section
+        perp_lo, perp_hi = constrained
         perp_mid_override = 0.5 * (perp_lo + perp_hi)
         section_width = perp_hi - perp_lo
-        print(f"  cross-section at cut: perp range [{perp_lo:.2f}, "
-              f"{perp_hi:.2f}] mm (width {section_width:.2f} mm, "
-              f"midpoint {perp_mid_override:.2f})")
-        # The 70% rule: tab tip width should not exceed 70% of the
-        # cross-section width. Otherwise the slot piece's material
-        # above and below the slot becomes paper-thin, the dovetail
-        # tip approaches the country's coastline (so the trapezoid
-        # north/south sides get clipped at the coast), and the joint
-        # visually degenerates into a Z-shaped cut rather than a
-        # clean trapezoidal tab. Also factor in clearance for the
-        # slot side.
-        max_tip_70 = 0.70 * section_width
-        # Slot piece's effective half-width occupied = (tab_tip/2) + clearance
-        # for the north-tip and south-tip walls. Total effective = tab_tip + 2*clearance.
-        effective_tip = tab_tip_mm + 2.0 * clearance_mm
-        if effective_tip > max_tip_70:
-            print(f"  WARNING: tab tip + 2× clearance "
-                  f"({effective_tip:.2f} mm = {effective_tip/section_width*100:.0f}% "
-                  f"of cross-section) exceeds the 70% rule "
-                  f"(max {max_tip_70:.2f} mm). The slot piece's "
-                  f"ceiling/floor material will be < "
-                  f"{(section_width - effective_tip) / 2:.2f} mm thick "
-                  f"and the joint may degenerate into a Z-shaped cut. "
-                  f"Shrink tab_tip_mm, reduce clearance, or pick a wider "
-                  f"cut location.")
+        print(f"  constrained perp range over tab depth: "
+              f"[{perp_lo:.2f}, {perp_hi:.2f}] (width {section_width:.2f}, "
+              f"centred at {perp_mid_override:.2f})")
+        # Required width = tab tip + 2× clearance + 2× min_shoulder.
+        # Slot cavity has tip+2*clearance at the cavity max; shoulders
+        # are the material between the cavity edge and the country
+        # coast on each side.
+        required = (tab_tip_mm + 2.0 * clearance_mm
+                    + 2.0 * min_shoulder_mm)
+        shoulder_each = 0.5 * (section_width
+                               - tab_tip_mm - 2.0 * clearance_mm)
+        if required > section_width:
+            print(f"  WARNING: tab tip + 2× clearance + 2× min_shoulder "
+                  f"({required:.2f}) exceeds constrained section width "
+                  f"({section_width:.2f}). Resulting shoulders will be "
+                  f"only {shoulder_each:.2f} mm each (< requested "
+                  f"{min_shoulder_mm:.2f} mm). The slot piece will have "
+                  f"a fragile thin neck. Shrink tab_tip_mm, reduce "
+                  f"clearance, reduce depth (so the constrained range "
+                  f"is wider), or pick a wider cut location.")
+        else:
+            print(f"  shoulders: {shoulder_each:.2f} mm each "
+                  f"(min required {min_shoulder_mm:.2f}) ✓")
 
     print(f"  splitting along {cut_axis} = {cut_coord:.2f} mm")
     print(f"  tab: base={tab_base_mm}  tip={tab_tip_mm}  depth={tab_depth_mm}  "
@@ -420,6 +461,11 @@ def main() -> int:
                          "where the production-scale STL is too small to "
                          "carry printable dovetail features. Defaults to "
                          "1.0 (no scaling).")
+    ap.add_argument("--min-shoulder-mm", type=float, default=3.0,
+                    help="Minimum material thickness between the slot "
+                         "cavity edge and the country coast (both top "
+                         "and bottom). Warns if the tab tip + clearance "
+                         "would leave thinner shoulders than this.")
     ap.add_argument("--base-only-z-max", type=float, default=None,
                     help="Confine the dovetail shape to z < this value "
                          "(typically the base slab top, 2 mm). Above this "
@@ -464,6 +510,7 @@ def main() -> int:
         clearance_mm=args.clearance_mm,
         keep_largest=args.keep_largest,
         base_only_z_max=args.base_only_z_max,
+        min_shoulder_mm=args.min_shoulder_mm,
     )
     t_split = time.perf_counter() - t0
     print(f"split total: {t_split:.2f} s")
