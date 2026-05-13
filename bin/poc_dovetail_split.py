@@ -44,8 +44,13 @@ from shapely.geometry import Polygon
 # These are the load-bearing parameters. Sized for the 200-mm-class slabs
 # the print bed actually splits at; the implementation bead will need to
 # generalise this (see report §4).
+#
+# Flare ratio (tip / base) controls how aggressively the tab widens as it
+# extends from the cut line. 1.5+ is a classic furniture dovetail; for FDM
+# prints with millimetre-scale layer adhesion, 1.15–1.25 is plenty for the
+# pull-out constraint and looks much less obtrusive at the cut line.
 DEFAULT_TAB_BASE_MM = 30.0   # width of tab along the cut line, at the base
-DEFAULT_TAB_TIP_MM = 45.0    # width of tab at the tip (must be > base for dovetail constraint)
+DEFAULT_TAB_TIP_MM = 36.0    # width of tab at the tip (1.2× base = mild flare)
 DEFAULT_TAB_DEPTH_MM = 15.0  # how far the tab protrudes from the cut line
 DEFAULT_CLEARANCE_MM = 0.20  # gap between tab and slot (FDM friction fit)
 
@@ -149,6 +154,26 @@ def build_splitter_solid(
     return prism
 
 
+def _keep_largest_component(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Return only the largest connected component of `mesh` by face count.
+
+    Used post-cut so the output STL is a single connected piece — the
+    user's concern with Japan's archipelago was that the cut produced
+    >2 disconnected pieces (one per intersected island). For single-
+    landmass countries (Cuba) this drops only the tiny offshore islets
+    (Isle of Youth + sliver), leaving the main island intact.
+    """
+    comps = mesh.split(only_watertight=False)
+    if len(comps) <= 1:
+        return mesh
+    largest = max(comps, key=lambda m: len(m.faces))
+    n_dropped = len(comps) - 1
+    dropped_faces = sum(len(c.faces) for c in comps if c is not largest)
+    print(f"    kept largest component ({len(largest.faces)} faces); "
+          f"dropped {n_dropped} smaller components ({dropped_faces} faces total)")
+    return largest
+
+
 def split_with_dovetail(
     mesh: trimesh.Trimesh,
     cut_axis: str = "auto",
@@ -157,9 +182,17 @@ def split_with_dovetail(
     tab_tip_mm: float = DEFAULT_TAB_TIP_MM,
     tab_depth_mm: float = DEFAULT_TAB_DEPTH_MM,
     clearance_mm: float = DEFAULT_CLEARANCE_MM,
+    keep_largest: bool = False,
 ) -> tuple[trimesh.Trimesh, trimesh.Trimesh]:
     """Return (tab_piece, slot_piece). Tab piece is the half whose tab juts
-    into the slot piece's territory."""
+    into the slot piece's territory.
+
+    If keep_largest is True, drops disconnected components (e.g. offshore
+    islets that fall entirely on one side of the cut) so each output STL
+    is a single connected piece. Without this flag, multi-island inputs
+    can produce STLs containing several disconnected components that the
+    slicer treats as separate parts.
+    """
     if cut_axis == "auto":
         ex = mesh.extents
         cut_axis = "x" if ex[0] >= ex[1] else "y"
@@ -167,7 +200,8 @@ def split_with_dovetail(
     if cut_coord is None:
         cut_coord = 0.5 * (xmin + xmax) if cut_axis == "x" else 0.5 * (ymin + ymax)
     print(f"  splitting along {cut_axis} = {cut_coord:.2f} mm")
-    print(f"  tab: base={tab_base_mm}  tip={tab_tip_mm}  depth={tab_depth_mm}  clearance={clearance_mm}")
+    print(f"  tab: base={tab_base_mm}  tip={tab_tip_mm}  depth={tab_depth_mm}  "
+          f"clearance={clearance_mm}  keep_largest={keep_largest}")
 
     # Tab piece = mesh ∩ splitter_tight  (the "<cut" half plus the tab)
     splitter_tight = build_splitter_solid(
@@ -193,6 +227,13 @@ def split_with_dovetail(
 
     tab_piece = manifold_clean(tab_piece)
     slot_piece = manifold_clean(slot_piece)
+
+    if keep_largest:
+        print("  keep_largest: tab piece")
+        tab_piece = _keep_largest_component(tab_piece)
+        print("  keep_largest: slot piece")
+        slot_piece = _keep_largest_component(slot_piece)
+
     return tab_piece, slot_piece
 
 
@@ -251,6 +292,10 @@ def main() -> int:
     ap.add_argument("--tab-tip-mm", type=float, default=DEFAULT_TAB_TIP_MM)
     ap.add_argument("--tab-depth-mm", type=float, default=DEFAULT_TAB_DEPTH_MM)
     ap.add_argument("--clearance-mm", type=float, default=DEFAULT_CLEARANCE_MM)
+    ap.add_argument("--keep-largest", action="store_true",
+                    help="After the cut, drop disconnected components on "
+                         "each side (small offshore islands etc.) so each "
+                         "output STL is a single connected piece.")
     args = ap.parse_args()
 
     if args.synthetic:
@@ -274,6 +319,7 @@ def main() -> int:
         tab_tip_mm=args.tab_tip_mm,
         tab_depth_mm=args.tab_depth_mm,
         clearance_mm=args.clearance_mm,
+        keep_largest=args.keep_largest,
     )
     t_split = time.perf_counter() - t0
     print(f"split total: {t_split:.2f} s")

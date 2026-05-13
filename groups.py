@@ -292,10 +292,24 @@ KOREA_JAPAN = CountryGroup(
 )
 
 
+# Land-only Cuba — single member, no ocean_extensions. Used as the
+# dovetail-split print-test PoC (bead 11): single elongated landmass
+# with real elevation (Sierra Maestra), needs splitting at scale 0.33.
+# The proper Cuba+Caribbean group with ocean extensions is bead 09.
+CUBA = CountryGroup(
+    name="Cuba",
+    members=["Cuba"],
+    notes="Land-only Cuba for the dovetail-split print-test PoC. The "
+          "real Cuba+Caribbean group (with ocean extensions toward USA, "
+          "Mexico, Jamaica, Hispaniola per the ownership rule) is bead 09.",
+)
+
+
 # Registry: command-line `--group NAME` looks this up.
 GROUPS: dict[str, CountryGroup] = {
     "UK_Ireland":       UK_IRELAND,
     "Denmark":          DENMARK,
     "Tierra_del_Fuego": TIERRA_DEL_FUEGO,
     "Korea_Japan":      KOREA_JAPAN,
+    "Cuba":             CUBA,
 }
