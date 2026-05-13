@@ -65,8 +65,8 @@ fig, axes = plt.subplots(2, 2, figsize=(16, 8),
                          sharex="col", sharey="row")
 
 slabs = [
-    ("base slab (z=0.5) — DOVETAIL VISIBLE", 0.5),
-    ("terrain (z=2.5) — CLEAN VERTICAL CUT", 2.5),
+    ("base slab (z=0.5)", 0.5),
+    ("terrain (z=2.5)", 2.5),
 ]
 
 for col_idx, (label, lpath, rpath) in enumerate(variants):
@@ -91,7 +91,7 @@ for col_idx, (label, lpath, rpath) in enumerate(variants):
         if row_idx == 1:
             ax.set_xlabel("X (mm)")
 
-fig.suptitle("Cuba dovetail PoC — base-only dovetail, "
+fig.suptitle("Cuba dovetail PoC — full-Z prism (matches BambuStudio), "
              "3 mm base / 5 mm tip (1.67× flare), 4 mm depth",
              fontsize=12, y=0.995)
 
