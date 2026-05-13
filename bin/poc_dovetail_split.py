@@ -414,6 +414,12 @@ def main() -> int:
                     help="After the cut, drop disconnected components on "
                          "each side (small offshore islands etc.) so each "
                          "output STL is a single connected piece.")
+    ap.add_argument("--xy-scale", type=float, default=1.0,
+                    help="Scale the input mesh XY (not Z) by this factor "
+                         "before splitting. Useful for PoC print tests "
+                         "where the production-scale STL is too small to "
+                         "carry printable dovetail features. Defaults to "
+                         "1.0 (no scaling).")
     ap.add_argument("--base-only-z-max", type=float, default=None,
                     help="Confine the dovetail shape to z < this value "
                          "(typically the base slab top, 2 mm). Above this "
@@ -434,6 +440,17 @@ def main() -> int:
         if not isinstance(mesh, trimesh.Trimesh):
             ap.error(f"loaded scene, not a single mesh: {type(mesh)}")
         print(f"Loaded {args.in_path}: extents={mesh.extents.tolist()}, faces={len(mesh.faces)}")
+
+    if args.xy_scale != 1.0:
+        # Scale XY only (preserve Z) so terrain doesn't get exaggerated.
+        scale_matrix = np.eye(4)
+        scale_matrix[0, 0] = args.xy_scale
+        scale_matrix[1, 1] = args.xy_scale
+        mesh.apply_transform(scale_matrix)
+        # Re-translate so the mesh starts at the origin in XY
+        mesh.apply_translation([-mesh.bounds[0, 0], -mesh.bounds[0, 1], 0])
+        print(f"  applied --xy-scale={args.xy_scale}: extents now "
+              f"{mesh.extents.tolist()}")
     print(f"  watertight={mesh.is_watertight}  volume={mesh.is_volume}")
 
     t0 = time.perf_counter()

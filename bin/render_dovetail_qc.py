@@ -78,11 +78,12 @@ for col_idx, (label, lpath, rpath) in enumerate(variants):
         right_fp = section_polygons_world(right, z)
         plot_polygon(ax, left_fp, facecolor="#2ca02c", edgecolor="#1a661a")
         plot_polygon(ax, right_fp, facecolor="#9467bd", edgecolor="#5a3a82")
-        ax.axvline(x=19.06, color="red", linestyle=":", linewidth=0.7)
+        # Cut + cross-section bounds are now 5× larger (Cuba scaled 5x XY)
+        ax.axvline(x=95.3, color="red", linestyle=":", linewidth=0.7)
         if row_idx == 0:
-            ax.axhline(y=1.98, color="orange", linestyle=":", linewidth=0.5)
-            ax.axhline(y=8.62, color="orange", linestyle=":", linewidth=0.5)
-            ax.axhline(y=5.30, color="orange", linestyle="-", linewidth=0.7)
+            ax.axhline(y=9.9,  color="orange", linestyle=":", linewidth=0.5)
+            ax.axhline(y=43.1, color="orange", linestyle=":", linewidth=0.5)
+            ax.axhline(y=26.5, color="orange", linestyle="-", linewidth=0.7)
         ax.set_title(f"{label}  —  {slab_label}", fontsize=10)
         ax.set_aspect("equal")
         ax.grid(alpha=0.3)
@@ -91,15 +92,15 @@ for col_idx, (label, lpath, rpath) in enumerate(variants):
         if row_idx == 1:
             ax.set_xlabel("X (mm)")
 
-fig.suptitle("Cuba dovetail PoC — full-Z prism, 2.5 mm base / 4 mm tip "
-             "(1.6× flare, 60% of section), 1.5 mm depth",
+fig.suptitle("Cuba 5x dovetail PoC — full-Z prism, 12.5 mm base / 20 mm tip "
+             "(1.6× flare, 60% of section), 7.5 mm depth",
              fontsize=12, y=0.995)
 
 fig.legend(handles=[
     mpatches.Patch(facecolor="#2ca02c", alpha=0.45, label="Tab piece (left)"),
     mpatches.Patch(facecolor="#9467bd", alpha=0.45, label="Slot piece (right)"),
     mpatches.Patch(facecolor="none", edgecolor="red", linestyle=":",
-                   label="cut line x=19.06"),
+                   label="cut line x=95.3"),
     mpatches.Patch(facecolor="none", edgecolor="orange",
                    label="cross-section perp bounds"),
 ], loc="lower center", ncol=4, bbox_to_anchor=(0.5, -0.02))
