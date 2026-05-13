@@ -2,7 +2,7 @@
 
 **One-line goal:** Make `make_country_group.py` emit multiple per-piece STLs when a country has outlying territories (France mainland + Guiana + Réunion + …) OR when a single component is too large for the print bed (will dovetail-split using the bead-11-validated parameters).
 
-**Status:** Not started — implementation bead. Bead 11 (feasibility + print test) is Done.
+**Status:** Done (2026-05-13). Implementation in `country_split.py`; driver patched; tests at `tests/test_country_split.py` (15/15 pass; full suite 99 passed + 1 skipped). All 5 acceptance criteria met. One known issue for follow-up: the new `plot_member_multi()` in `qc/visual.py` needs the segmentize-before-reproject fix that `qc/per_piece.py` already has, so France's multi-piece QC overlay shows reprojection artifacts — visualization-only; STLs are correct.
 
 ## Context
 
