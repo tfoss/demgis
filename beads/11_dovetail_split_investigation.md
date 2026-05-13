@@ -2,7 +2,7 @@
 
 **One-line goal:** Investigate whether automated multi-piece splitting with dovetail joints can be baked into the STL generation pipeline, replacing the current manual BambuStudio post-processing step for oversized countries (US, China, Brazil, India, eventually Russia).
 
-**Status:** Not started — pure investigation, no implementation in this bead.
+**Status:** Done — feasibility report + PoC delivered (see `docs/dovetail_split_feasibility.md` and `bin/poc_dovetail_split.py`). Verdict: implement; 3–5 engineer-days. One open print-test required to verify FDM layer-line load handling.
 
 ## Context
 
