@@ -79,6 +79,7 @@ def build_splitter_solid(
     tab_tip_mm: float,
     tab_depth_mm: float,
     clearance_mm: float = 0.0,
+    perp_mid_override: float | None = None,
 ) -> trimesh.Trimesh:
     """Build a prism that occupies the half-space {cut_axis < cut_coord},
     with a dovetail tab protruding into the OTHER half along +cut_axis.
@@ -105,10 +106,14 @@ def build_splitter_solid(
 
     if cut_axis == "x":
         perp_lo, perp_hi = ymin, ymax
-        perp_mid = 0.5 * (perp_lo + perp_hi)
+        perp_mid = (perp_mid_override
+                    if perp_mid_override is not None
+                    else 0.5 * (perp_lo + perp_hi))
     else:
         perp_lo, perp_hi = xmin, xmax
-        perp_mid = 0.5 * (perp_lo + perp_hi)
+        perp_mid = (perp_mid_override
+                    if perp_mid_override is not None
+                    else 0.5 * (perp_lo + perp_hi))
 
     # Build the 2D outline in the (cut_axis, perp_axis) plane.
     # Half-space is everything with cut_axis < cut_coord.
@@ -152,6 +157,34 @@ def build_splitter_solid(
     prism = trimesh.creation.extrude_polygon(poly, height=z_hi - z_lo)
     prism.apply_translation([0.0, 0.0, z_lo])
     return prism
+
+
+def _cross_section_perp_range(
+    mesh: trimesh.Trimesh,
+    cut_axis: str,
+    cut_coord: float,
+    slab_mm: float = 0.5,
+) -> tuple[float, float] | None:
+    """Find the perpendicular-axis range where the mesh has material at
+    the cut plane. Returns (perp_min, perp_max) or None if the cut plane
+    doesn't intersect any material.
+
+    Without this, the dovetail tab is centred on the full mesh bbox
+    midpoint — but for irregular shapes (Cuba's elongated banana, Chile's
+    long thin profile, etc.) the country's actual cross-section at the
+    cut line is offset from the bbox midpoint. Placing the tab on the
+    bbox midpoint leaves part of the tab in mid-air, where the boolean
+    intersection produces no material, and the joint becomes a half-tab
+    nubbin rather than a proper dovetail.
+    """
+    axis_idx = 0 if cut_axis == "x" else 1
+    perp_idx = 1 - axis_idx
+    near = mesh.vertices[
+        np.abs(mesh.vertices[:, axis_idx] - cut_coord) < slab_mm
+    ]
+    if len(near) == 0:
+        return None
+    return float(near[:, perp_idx].min()), float(near[:, perp_idx].max())
 
 
 def _keep_largest_component(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
@@ -199,6 +232,32 @@ def split_with_dovetail(
     (xmin, ymin, _), (xmax, ymax, _) = mesh.bounds
     if cut_coord is None:
         cut_coord = 0.5 * (xmin + xmax) if cut_axis == "x" else 0.5 * (ymin + ymax)
+
+    # Find where the country actually has material at the cut line, so
+    # the tab is centred on the cross-section midpoint rather than the
+    # bbox midpoint (which would leave part of the tab in mid-air for
+    # irregular country shapes).
+    section = _cross_section_perp_range(mesh, cut_axis, cut_coord)
+    if section is None:
+        print(f"  WARNING: no mesh material at cut={cut_coord:.2f}; "
+              f"falling back to bbox-midpoint placement")
+        perp_mid_override = None
+        section_width = None
+    else:
+        perp_lo, perp_hi = section
+        perp_mid_override = 0.5 * (perp_lo + perp_hi)
+        section_width = perp_hi - perp_lo
+        print(f"  cross-section at cut: perp range [{perp_lo:.2f}, "
+              f"{perp_hi:.2f}] mm (width {section_width:.2f} mm, "
+              f"midpoint {perp_mid_override:.2f})")
+        # Sanity: tip width must be < section width or the tab won't
+        # be fully embedded in material.
+        if tab_tip_mm >= section_width:
+            print(f"  WARNING: tab tip ({tab_tip_mm} mm) >= cross-section "
+                  f"width ({section_width:.2f} mm); tab will extend past "
+                  f"the country at the cut. Shrink tab or pick a wider "
+                  f"cut location.")
+
     print(f"  splitting along {cut_axis} = {cut_coord:.2f} mm")
     print(f"  tab: base={tab_base_mm}  tip={tab_tip_mm}  depth={tab_depth_mm}  "
           f"clearance={clearance_mm}  keep_largest={keep_largest}")
@@ -207,12 +266,14 @@ def split_with_dovetail(
     splitter_tight = build_splitter_solid(
         mesh.bounds, cut_axis, cut_coord,
         tab_base_mm, tab_tip_mm, tab_depth_mm, clearance_mm=0.0,
+        perp_mid_override=perp_mid_override,
     )
     # Slot piece = mesh − splitter_loose  (the ">cut" half, with a slightly
     # oversized slot carved out where the tab sits)
     splitter_loose = build_splitter_solid(
         mesh.bounds, cut_axis, cut_coord,
         tab_base_mm, tab_tip_mm, tab_depth_mm, clearance_mm=clearance_mm,
+        perp_mid_override=perp_mid_override,
     )
 
     t0 = time.perf_counter()
