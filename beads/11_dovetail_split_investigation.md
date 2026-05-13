@@ -2,7 +2,23 @@
 
 **One-line goal:** Investigate whether automated multi-piece splitting with dovetail joints can be baked into the STL generation pipeline, replacing the current manual BambuStudio post-processing step for oversized countries (US, China, Brazil, India, eventually Russia).
 
-**Status:** Done — feasibility report + PoC delivered (see `docs/dovetail_split_feasibility.md` and `bin/poc_dovetail_split.py`). Verdict: implement; 3–5 engineer-days. One open print-test required to verify FDM layer-line load handling.
+**Status:** Done — feasibility report + PoC delivered + **print-test validated** (2026-05-13).
+
+**Print-test result:** Cuba 5x PoC at `--clearance-mm 0.0` printed and the two pieces fit together perfectly. This confirms:
+* Full-Z dovetail prism geometry is correct (matches BambuStudio's approach)
+* **0.0 mm clearance is the right production default** — FDM print tolerance alone is sufficient for a friction fit
+* Trapezoidal flare at 1.5× tip:base ratio holds X-direction lock
+* Constrained-center placement + 5 mm min-shoulder rule produces a robust joint
+* No FDM layer-line failure (the joint engages without breaking along the tab's vertical-prism layer lines)
+
+**Validated parameter set for the implementation bead:**
+* `tab_base_mm = 10`, `tab_tip_mm = 15`, `tab_depth_mm = 5` (Cuba 5x; scale proportionally for production)
+* `clearance_mm = 0.0`
+* `min_shoulder_mm = 5.0` (per-side material between slot cavity and country coast)
+* Full-Z prism (no `base_only_z_max`)
+* `keep_largest = True` for archipelago countries
+
+Verdict: implement; complexity estimate **2–3 engineer-days** (down from 3–5 with the FDM layer-line risk now retired).
 
 ## Context
 

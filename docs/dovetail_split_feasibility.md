@@ -1,20 +1,39 @@
 # Dovetail-split STL generation — feasibility report
 
-**Bead 11 deliverable. Investigation only; no pipeline changes proposed yet.**
+**Bead 11 deliverable. PRINT-TEST VALIDATED 2026-05-13.**
 
 ## Executive summary
 
-Baking dovetail splits into the STL pipeline is **feasible and recommended (yes-with-caveats)**.
+Baking dovetail splits into the STL pipeline is **feasible, recommended, and validated by physical print test**.
 A boolean-cut PoC (`bin/poc_dovetail_split.py`) splits a 100K-face Japan STL into
 two interlocking watertight pieces in **~90 ms** end-to-end on trimesh+manifold3d,
 scaling to **~3.5 s** at 3 M faces. The dovetail geometry is straightforward
 (one trapezoidal tab centred on a cut plane), the existing `manifold_clean`
 pattern from `make_all_sa_with_vector_clip.py` handles the post-boolean cleanup
 unchanged, and BambuStudio's joint parameters (Depth / Width / Flap-angle /
-Groove-angle) map 1:1 onto our PoC parameters. The load-bearing caveats are
-**joint-orientation for FDM layer adhesion** and **multi-cut recursion for
-Russia/Antarctica-scale meshes** — neither blocking, both worth their own
-design pass in the implementation bead. Estimated effort: **3–5 engineer-days**.
+Groove-angle) map 1:1 onto our PoC parameters.
+
+**Print test (Cuba 5x, clearance=0.0):** pieces fit together perfectly. Confirms
+zero-clearance is the right production default, validates the trapezoidal flare
+at 1.5× tip:base, retires the FDM-layer-line concern, and validates the
+constrained-perp-range centring + 5 mm min-shoulder rule. Estimated implementation
+effort: **2–3 engineer-days** (down from 3–5 with the layer-line risk retired).
+
+## Validated parameter set (from print test)
+
+For the bead-12 implementation, use these defaults — proven in-hand:
+
+| Parameter | Value | Notes |
+|---|---|---|
+| `clearance_mm` | **0.0** | FDM print tolerance is sufficient; no extra gap needed |
+| Tab proportions (PoC scale) | base=10, tip=15, depth=5 mm | 1.5× tip:base flare, 5 mm depth |
+| `min_shoulder_mm` | 5.0 | Material between slot cavity and country coast |
+| Splitter geometry | full-Z prism | Matches BambuStudio; printable without overhang |
+| Centering | constrained perp-range over depth | Accommodates curving coastlines (Cuba, Chile) |
+| Component handling | `keep_largest` per piece | Drops offshore islets from each side |
+
+Scale the dimensions proportionally to the cut-line cross-section width
+(tip ≈ 0.5 × constrained section width, base ≈ 0.66 × tip).
 
 ## BambuStudio joint reference
 
