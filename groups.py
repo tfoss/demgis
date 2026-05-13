@@ -198,6 +198,21 @@ class CountryGroup:
     # default capital from CAPITALS is outside wgs84_bbox, the star is
     # suppressed entirely.
     regional_capitals: dict[str, tuple[str, float, float]] = field(default_factory=dict)
+    # Bead 12 — per-member explicit component-label override map. Keys are the
+    # default component labels chosen by ``country_split.split_by_components``
+    # (``mainland``, ``outlying_1``, ``outlying_2``, ... or a built-in
+    # sub-region name like ``french_guiana``); values are the label you'd
+    # rather use in the output STL filename. Use only when neither the
+    # ``mainland``/``outlying_<n>`` fallback nor the built-in
+    # ``KNOWN_SUBREGIONS`` table produces the name you want.
+    component_names: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Bead 12 — per-member force-disable for the component split. The driver
+    # auto-decides whether to split (based on whether the country has known
+    # outlying territories AND multiple sizable components in the mesh); set
+    # to True to override and always keep the single-STL-per-member output.
+    # Used by groups whose downstream tooling assumes one STL per member
+    # and isn't ready for the multi-piece output.
+    disable_component_split: dict[str, bool] = field(default_factory=dict)
     notes: str = ""
 
 

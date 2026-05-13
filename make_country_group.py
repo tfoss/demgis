@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import make_all_sa_with_vector_clip as pipe
 import ocean_precompute
 import ocean_extension as ocean_ext_mod
+import country_split as csplit
 from groups import GROUPS, Bridge, CountryGroup
 
 
@@ -239,6 +240,369 @@ def resolve_capital(
     return default
 
 
+# ---------------------------------------------------------------------------
+# Bead 12 — post-mesh component + dovetail splitting
+# ---------------------------------------------------------------------------
+
+def _premirror_xy_from_postscale(
+    x_post: float, y_post: float,
+    premirror_xmax: float,
+) -> tuple[float, float]:
+    """Invert the mirror+scale that ``process_country`` applies right
+    before STL export.
+
+    ``process_country`` does (with ``GLOBAL_XY_SCALE = pipe.GLOBAL_XY_SCALE``
+    and ``MIRROR_X = pipe.MIRROR_X``):
+
+        post = (premirror_xmax - premirror) * scale       if MIRROR_X
+        post = premirror * scale                          else
+        y_post = premirror_y * scale  (no mirror)
+
+    Then a vertex-translate shifts so x_post.min() == 0, so for ``MIRROR_X``:
+
+        x_post = (premirror_xmax - premirror_x) * scale - 0  (already zeroed)
+
+    The inverse is therefore:
+
+        premirror_x = premirror_xmax - x_post / scale
+        premirror_y = y_post / scale
+    """
+    scale = pipe.GLOBAL_XY_SCALE
+    if pipe.MIRROR_X:
+        premirror_x = premirror_xmax - x_post / scale
+    else:
+        premirror_x = x_post / scale
+    premirror_y = y_post / scale
+    return premirror_x, premirror_y
+
+
+def _mesh_bbox_crs_for_subpiece(
+    subpiece_post_bounds: np.ndarray,
+    pmeta: dict,
+) -> dict:
+    """Compute the per-sub-piece CRS bbox using the same math as
+    ``build_alignment`` but applied to a sub-mesh's post-mirror-scale
+    AABB.
+
+    ``subpiece_post_bounds`` is a (2, 3) numpy array of the sub-piece's
+    bounds in the post-mirror-scale mesh (BEFORE the per-piece re-zero
+    that ``split_by_components`` applies for export). ``pmeta`` is the
+    pipeline metadata for the parent member (premirror_bounds_mm +
+    dem_transform_*).
+    """
+    pb = pmeta["premirror_bounds_mm"]
+    premirror_xmax = pb["xmax"]
+    # Sub-piece post-mirror-scale bounds.
+    sx0, sy0 = subpiece_post_bounds[0, 0], subpiece_post_bounds[0, 1]
+    sx1, sy1 = subpiece_post_bounds[1, 0], subpiece_post_bounds[1, 1]
+    # Invert mirror+scale per corner.
+    pre_x0, pre_y0 = _premirror_xy_from_postscale(sx0, sy0, premirror_xmax)
+    pre_x1, pre_y1 = _premirror_xy_from_postscale(sx1, sy1, premirror_xmax)
+    # MIRROR_X swaps the X-min and X-max in pre-mirror space.
+    pre_xmin = min(pre_x0, pre_x1)
+    pre_xmax = max(pre_x0, pre_x1)
+    pre_ymin = min(pre_y0, pre_y1)
+    pre_ymax = max(pre_y0, pre_y1)
+
+    tx_c = pmeta["dem_transform_c"]
+    tx_f = pmeta["dem_transform_f"]
+    tx_a = pmeta["dem_transform_a"]
+    tx_e = pmeta["dem_transform_e"]
+    mm_per_px = pipe.XY_MM_PER_PIXEL
+    crs_xmin = tx_c + (pre_xmin / mm_per_px) * tx_a
+    crs_xmax = tx_c + (pre_xmax / mm_per_px) * tx_a
+    crs_ymin = tx_f + (pre_ymax / mm_per_px) * tx_e   # ymax → southernmost
+    crs_ymax = tx_f + (pre_ymin / mm_per_px) * tx_e   # ymin → northernmost
+    return {
+        "minx": float(crs_xmin), "miny": float(crs_ymin),
+        "maxx": float(crs_xmax), "maxy": float(crs_ymax),
+    }
+
+
+def _make_mesh_to_wgs84(
+    pmeta: dict, dem_crs: str,
+):
+    """Build a mesh-mm -> WGS84 (lon, lat) callable for the sub-region
+    lookup. Uses pyproj for the CRS->WGS84 leg. Returns None if any
+    required metadata is missing."""
+    if pmeta is None:
+        return None
+    try:
+        import pyproj
+    except Exception:
+        return None
+    pb = pmeta["premirror_bounds_mm"]
+    premirror_xmax = pb["xmax"]
+    tx_c = pmeta["dem_transform_c"]
+    tx_f = pmeta["dem_transform_f"]
+    tx_a = pmeta["dem_transform_a"]
+    tx_e = pmeta["dem_transform_e"]
+    mm_per_px = pipe.XY_MM_PER_PIXEL
+    transformer = pyproj.Transformer.from_crs(
+        dem_crs, "EPSG:4326", always_xy=True,
+    )
+
+    def mesh_to_wgs84(x_mm: float, y_mm: float) -> tuple[float, float]:
+        pre_x, pre_y = _premirror_xy_from_postscale(x_mm, y_mm, premirror_xmax)
+        crs_x = tx_c + (pre_x / mm_per_px) * tx_a
+        crs_y = tx_f + (pre_y / mm_per_px) * tx_e
+        lon, lat = transformer.transform(crs_x, crs_y)
+        return float(lon), float(lat)
+
+    return mesh_to_wgs84
+
+
+def split_member_stl(
+    member: str,
+    group: CountryGroup,
+    out_dir: str,
+    pmeta: dict,
+    dem_crs: str,
+    bed_mm: float = csplit.DEFAULT_BED_MM,
+    prime_tower_mm: float = csplit.DEFAULT_PRIME_TOWER_MM,
+) -> list[dict]:
+    """Post-process the just-written ``<Member>_solid.stl`` (or ``_starup``):
+
+    1. Load the mesh.
+    2. Component split (drops outlying components below
+       ``CountryGroup.min_island_area_km2[member]`` when set).
+    3. For each component, check ``needs_dovetail_split`` and (if True)
+       recursively halve with the bead-11 dovetail joint.
+    4. Write each final piece as ``<Member>_<component>[_<piece>].stl``.
+    5. Return a list of per-sub-piece metadata dicts:
+         {label, stl_path, component, dovetail_neighbour, cut_axis,
+          cut_coord_mm, is_tab, mesh_bbox_crs}
+
+    For single-component, fits-on-bed members the original
+    ``<Member>_solid.stl`` is left in place and the returned list has a
+    single entry pointing at it (label = "mainland", no neighbour). This
+    is the regression-safe path for Korea/Japan/Cuba/etc.
+    """
+    import trimesh
+    suffix = "_starup" if group.extrude_star.get(member, False) else "_solid"
+    member_safe = member.replace(" ", "_")
+    orig_stl_name = f"{member_safe}{suffix}.stl"
+    orig_stl_path = os.path.join(out_dir, orig_stl_name)
+    if not os.path.exists(orig_stl_path):
+        print(f"  split: {member}: original STL missing at {orig_stl_path}")
+        return []
+
+    # process=True (default) merges duplicate vertices — required for
+    # mesh.split to identify connected components correctly. Without it,
+    # France's 78k faces appear as 78k separate components.
+    mesh = trimesh.load(orig_stl_path, force="mesh")
+    if not isinstance(mesh, trimesh.Trimesh):
+        mesh = trimesh.util.concatenate(
+            [g for g in mesh.geometry.values() if isinstance(g, trimesh.Trimesh)]
+        )
+
+    # Decide whether component splitting is appropriate for this member.
+    # Rules (in order):
+    #   1. group.disable_component_split[member] == True → force-disable.
+    #   2. Members with ocean_extensions → disable. The ocean halo +
+    #      registration surface is designed to keep the archipelago in a
+    #      single STL (Japan, Indonesia, …).
+    #   3. Members with a built-in KNOWN_SUBREGIONS entry → enable. These
+    #      countries are known to have real disjoint outlying territories
+    #      (France, USA, Russia, …).
+    #   4. Anything else → disable. Multi-component meshes for normal
+    #      countries are usually post-boolean artifacts, not real
+    #      disjoint territories.
+    forced_off = bool(group.disable_component_split.get(member, False))
+    has_ocean_extension = bool(group.ocean_extensions.get(member))
+    has_known_subregions = member in csplit.KNOWN_SUBREGIONS
+    enable_component_split = (not forced_off
+                              and not has_ocean_extension
+                              and has_known_subregions)
+
+    if forced_off or has_ocean_extension or not enable_component_split:
+        reason = ("disable_component_split" if forced_off
+                  else ("ocean_extension" if has_ocean_extension
+                        else "no KNOWN_SUBREGIONS entry"))
+        print(f"\n  {member}: component split disabled ({reason}); "
+              f"checking dovetail fit only.")
+        if not csplit.needs_dovetail_split(mesh, bed_mm, prime_tower_mm):
+            bbox = None
+            try:
+                bbox = _mesh_bbox_crs_for_subpiece(mesh.bounds, pmeta)
+            except Exception as e:
+                print(f"    bbox derivation failed: {e}")
+            return [{
+                "label": "mainland", "component": "mainland",
+                "stl": orig_stl_path, "dovetail_neighbour": None,
+                "cut_axis": None, "cut_coord_mm": None, "is_tab": None,
+                "mesh_bbox_crs": bbox,
+            }]
+        # Needs dovetail. Run it on the full mesh.
+        print(f"    {member}: full mesh needs dovetail split.")
+        dpieces = csplit.dovetail_split_to_fit(
+            mesh, bed_mm=bed_mm, prime_tower_mm=prime_tower_mm,
+        )
+        member_safe2 = member.replace(" ", "_")
+        out_pieces2: list[dict] = []
+        for dp in dpieces:
+            piece_label = dp.suffix or "mainland"
+            stl_name = f"{member_safe2}_{piece_label}.stl"
+            stl_path = os.path.join(out_dir, stl_name)
+            cleaned = csplit.manifold_clean(dp.mesh)
+            cleaned.export(stl_path)
+            neighbour = (f"{member_safe2}_{dp.neighbour_suffix}"
+                         if dp.neighbour_suffix else None)
+            out_pieces2.append({
+                "label": piece_label, "component": "mainland",
+                "stl": stl_path, "dovetail_neighbour": neighbour,
+                "cut_axis": dp.cut_axis, "cut_coord_mm": dp.cut_coord_mm,
+                "is_tab": dp.is_tab, "mesh_bbox_crs": None,
+            })
+            print(f"      wrote {stl_path} ({len(cleaned.faces)} faces)")
+        try:
+            os.remove(orig_stl_path)
+            print(f"    removed combined STL: {orig_stl_path}")
+        except Exception:
+            pass
+        return out_pieces2
+
+    print(f"\n  Splitting {member} ({len(mesh.faces)} faces)...")
+
+    # Component split. Pull the per-member knob from group.min_island_area_km2;
+    # fall back to a small floor so post-boolean micro-artifacts don't ship as
+    # separate STLs. See country_split.DEFAULT_OUTLYING_MIN_KM2.
+    min_area_km2 = group.min_island_area_km2.get(
+        member, csplit.DEFAULT_OUTLYING_MIN_KM2,
+    )
+
+    # Convert mesh-mm² to real km² using the pipeline's post-scale
+    # relationship. mm in mesh = m in CRS × (XY_MM_PER_PIXEL * GLOBAL_XY_SCALE
+    # / pixel_w). 1 km² real = 1e6 m² → 1e6 × that² mm² in mesh.
+    pixel_w = float(pmeta.get("dem_transform_a") or 2000.0)
+    scale_m_to_mm = (pipe.XY_MM_PER_PIXEL * pipe.GLOBAL_XY_SCALE) / pixel_w
+    mm2_per_km2 = (scale_m_to_mm ** 2) * 1e6  # 1 km² = 1e6 m²
+
+    mesh_to_wgs84 = _make_mesh_to_wgs84(pmeta, dem_crs)
+    explicit_names = group.component_names.get(member, {}) if hasattr(
+        group, "component_names") else {}
+
+    components = csplit.split_by_components(
+        mesh,
+        country=member,
+        min_area_km2=min_area_km2,
+        mm2_per_km2=mm2_per_km2,
+        mesh_to_wgs84=mesh_to_wgs84,
+        component_names=explicit_names or None,
+    )
+    print(f"    components: {[c.label for c in components]}")
+
+    # Regression-safe path: single component, no split needed → leave the
+    # original STL in place and return one entry. Pre-bead-12 behaviour.
+    if (len(components) == 1
+            and not csplit.needs_dovetail_split(
+                components[0].mesh, bed_mm, prime_tower_mm)):
+        # mesh_bbox_crs identical to the old build_alignment path —
+        # uses the parent's full premirror bounds.
+        bbox = None
+        try:
+            bbox = _mesh_bbox_crs_for_subpiece(mesh.bounds, pmeta)
+        except Exception as e:
+            print(f"    split: {member}: bbox derivation failed: {e}")
+        return [{
+            "label": "mainland",
+            "component": "mainland",
+            "stl": orig_stl_path,
+            "dovetail_neighbour": None,
+            "cut_axis": None,
+            "cut_coord_mm": None,
+            "is_tab": None,
+            "mesh_bbox_crs": bbox,
+        }]
+
+    # Multi-component or needs-dovetail path. We'll emit one STL per
+    # final piece. Capture the per-component PRE-rezero bounds for the
+    # mesh_bbox_crs derivation, then re-zero the sub-mesh inside the
+    # split routines.
+    out_pieces: list[dict] = []
+
+    for comp in components:
+        # Look up the pre-rezero post-mirror-scale bounds for this
+        # component by re-splitting the original mesh (split_by_components
+        # zeroed each piece on the way out — we need the raw bounds here).
+        # Cheap: mesh.split runs again. We could pass these through but
+        # keeping split_by_components' API clean is easier.
+        comp_raw_bounds = None
+        for raw in mesh.split(only_watertight=False):
+            # Heuristic match: face count must match exactly.
+            if len(raw.faces) == len(comp.mesh.faces):
+                comp_raw_bounds = raw.bounds.copy()
+                break
+
+        # Does this component need dovetail splitting?
+        if csplit.needs_dovetail_split(comp.mesh, bed_mm, prime_tower_mm):
+            print(f"    {comp.label}: needs dovetail split "
+                  f"(extents={comp.mesh.extents.tolist()})")
+            dpieces = csplit.dovetail_split_to_fit(
+                comp.mesh, bed_mm=bed_mm, prime_tower_mm=prime_tower_mm,
+            )
+            for dp in dpieces:
+                piece_label = (f"{comp.label}_{dp.suffix}"
+                               if dp.suffix else comp.label)
+                neighbour_label = (f"{comp.label}_{dp.neighbour_suffix}"
+                                   if dp.neighbour_suffix else None)
+                stl_name = f"{member_safe}_{piece_label}.stl"
+                stl_path = os.path.join(out_dir, stl_name)
+                cleaned = csplit.manifold_clean(dp.mesh)
+                cleaned.export(stl_path)
+                bbox = None  # dovetail sub-pieces: per-piece CRS bbox would
+                              # require tracking the parent-component offset
+                              # AND the dovetail cut offset. Out of scope for
+                              # bead 12; alignment falls back to ncols math.
+                out_pieces.append({
+                    "label": piece_label,
+                    "component": comp.label,
+                    "stl": stl_path,
+                    "dovetail_neighbour": (f"{member_safe}_{neighbour_label}"
+                                           if neighbour_label else None),
+                    "cut_axis": dp.cut_axis,
+                    "cut_coord_mm": dp.cut_coord_mm,
+                    "is_tab": dp.is_tab,
+                    "mesh_bbox_crs": bbox,
+                })
+                print(f"      wrote {stl_path} ({len(cleaned.faces)} faces)")
+        else:
+            piece_label = comp.label
+            stl_name = f"{member_safe}_{piece_label}.stl"
+            stl_path = os.path.join(out_dir, stl_name)
+            cleaned = csplit.manifold_clean(comp.mesh)
+            cleaned.export(stl_path)
+            # mesh_bbox_crs from the component's pre-rezero post-scale bounds.
+            bbox = None
+            if comp_raw_bounds is not None:
+                try:
+                    bbox = _mesh_bbox_crs_for_subpiece(comp_raw_bounds, pmeta)
+                except Exception as e:
+                    print(f"      bbox derivation failed: {e}")
+            out_pieces.append({
+                "label": piece_label,
+                "component": piece_label,
+                "stl": stl_path,
+                "dovetail_neighbour": None,
+                "cut_axis": None,
+                "cut_coord_mm": None,
+                "is_tab": None,
+                "mesh_bbox_crs": bbox,
+            })
+            print(f"      wrote {stl_path} ({len(cleaned.faces)} faces)")
+
+    # Multi-piece path: delete the original combined STL — it's now
+    # redundant and would confuse downstream tooling (which expects each
+    # file to be a single printable piece).
+    if out_pieces and (len(out_pieces) > 1 or out_pieces[0]["stl"] != orig_stl_path):
+        try:
+            os.remove(orig_stl_path)
+            print(f"    removed combined STL: {orig_stl_path}")
+        except Exception as e:
+            print(f"    warning: could not remove {orig_stl_path}: {e}")
+    return out_pieces
+
+
 def patched_process_country(country_name, group: CountryGroup, *args, **kwargs):
     """Wrap process_country so coverage-check failures for COVERAGE_EXEMPT
     members — or members with ocean extensions, since their geom includes
@@ -270,9 +634,20 @@ def build_alignment(
     dem: rasterio.DatasetReader,
     member_geoms_proj: dict,
     pipeline_meta_by_member: Optional[dict] = None,
+    split_pieces_by_member: Optional[dict[str, list[dict]]] = None,
 ) -> dict:
     """Construct alignment.json-compatible metadata (same schema as
-    pilot_eqearth_alignment.json / seasia_eurasia_alignment.json)."""
+    pilot_eqearth_alignment.json / seasia_eurasia_alignment.json).
+
+    When ``split_pieces_by_member`` is provided (bead 12), each member
+    expands into one ``pieces`` entry per sub-piece (component +/or
+    dovetail), keyed as ``<Member>__<sub-piece-label>``. The original
+    ``<Member>`` key still exists and points at the *primary* (largest /
+    "mainland") sub-piece, for back-compat with consumers that look up
+    by member name. When the member has only a single sub-piece (the
+    regression path), the ``<Member>`` entry is the only entry and the
+    output is byte-identical to pre-bead-12.
+    """
     pieces = {}
     for cname, geom_proj in member_geoms_proj.items():
         try:
@@ -318,21 +693,80 @@ def build_alignment(
                 "maxx": crs_xmax, "maxy": crs_ymax,
             }
 
+        # Bead 12 — emit one entry per sub-piece. The "primary" sub-piece
+        # (component=mainland) also gets the bare <Member> key, so
+        # consumers looking up by member name still find a single STL.
+        sub_pieces = (split_pieces_by_member or {}).get(cname, [])
         suffix = "_starup" if group.extrude_star.get(cname, False) else "_solid"
-        stl_name = f"{cname.replace(' ', '_')}{suffix}.stl"
-        stl_path = os.path.join(out_dir, stl_name)
-        pieces[cname] = {
-            "stl": stl_path,
-            "origin_crs": {"x": origin_x, "y": origin_y},
-            "ncols": ncols,
-            "nrows": nrows,
-            "east_edge_crs_x": east_edge_x,
-            "is_mainland": True,
-            # Authoritative bbox of the mesh's actual extent in CRS. Falls
-            # back to None on legacy / ocean-tile paths; PieceTransform uses
-            # the older ncols-based math when this isn't available.
-            "mesh_bbox_crs": mesh_bbox_crs,
-        }
+        fallback_stl = os.path.join(
+            out_dir, f"{cname.replace(' ', '_')}{suffix}.stl"
+        )
+
+        if not sub_pieces:
+            # No bead-12 metadata available (e.g. the split failed to
+            # produce anything). Fall back to the pre-bead-12 single-STL
+            # entry, byte-identical to the old output.
+            pieces[cname] = {
+                "stl": fallback_stl,
+                "origin_crs": {"x": origin_x, "y": origin_y},
+                "ncols": ncols,
+                "nrows": nrows,
+                "east_edge_crs_x": east_edge_x,
+                "is_mainland": True,
+                "mesh_bbox_crs": mesh_bbox_crs,
+            }
+            continue
+
+        # Regression-safe path: exactly one sub-piece pointing at the
+        # original <Member>_solid.stl. Output identical to pre-bead-12.
+        if (len(sub_pieces) == 1
+                and sub_pieces[0]["stl"] == fallback_stl):
+            sp = sub_pieces[0]
+            pieces[cname] = {
+                "stl": sp["stl"],
+                "origin_crs": {"x": origin_x, "y": origin_y},
+                "ncols": ncols,
+                "nrows": nrows,
+                "east_edge_crs_x": east_edge_x,
+                "is_mainland": True,
+                "mesh_bbox_crs": sp.get("mesh_bbox_crs") or mesh_bbox_crs,
+            }
+            continue
+
+        # Multi-piece path. One entry per sub-piece, keyed
+        # "<Member>__<label>". The "<Member>" key also exists, pointing
+        # at the primary (largest/mainland) sub-piece.
+        primary_idx = None
+        for i, sp in enumerate(sub_pieces):
+            if sp.get("component") == "mainland":
+                primary_idx = i
+                break
+        if primary_idx is None:
+            primary_idx = 0
+        for i, sp in enumerate(sub_pieces):
+            piece_key = f"{cname}__{sp['label']}"
+            entry = {
+                "stl": sp["stl"],
+                "origin_crs": {"x": origin_x, "y": origin_y},
+                "ncols": ncols,
+                "nrows": nrows,
+                "east_edge_crs_x": east_edge_x,
+                "is_mainland": (i == primary_idx),
+                "mesh_bbox_crs": sp.get("mesh_bbox_crs") or mesh_bbox_crs,
+                "member": cname,
+                "component": sp["component"],
+                "label": sp["label"],
+                "dovetail_neighbour": sp.get("dovetail_neighbour"),
+                "cut_axis": sp.get("cut_axis"),
+                "cut_coord_mm": sp.get("cut_coord_mm"),
+                "is_tab": sp.get("is_tab"),
+            }
+            pieces[piece_key] = entry
+            if i == primary_idx:
+                # Bare-member key points at the primary (mainland) piece
+                # so back-compat consumers get something sensible.
+                bare = dict(entry)
+                pieces[cname] = bare
 
     return {
         "dem": dem_path,
@@ -404,19 +838,33 @@ def run_qc(
         },
     )
 
-    for member, piece in alignment["pieces"].items():
+    # Bead 12 — alignment may contain both bare-<Member> entries and
+    # <Member>__<label> sub-piece entries. Skip the bare entry when sub-
+    # pieces exist (otherwise we'd run per-piece QC twice on the primary
+    # sub-piece). Find members that own sub-piece entries first.
+    members_with_subpieces: set[str] = set()
+    for key, piece in alignment["pieces"].items():
+        if "member" in piece and piece.get("member") != key:
+            members_with_subpieces.add(piece["member"])
+
+    for key, piece in alignment["pieces"].items():
+        if key in members_with_subpieces and "member" not in piece:
+            # Bare-<Member> entry; sub-piece entries cover it.
+            continue
         stl_path = piece["stl"]
+        country_name = piece.get("member", key)
+        subject = key
         if not os.path.exists(stl_path):
             child = QCReport(
-                subject=member, kind="per_piece",
+                subject=subject, kind="per_piece",
                 metadata={"error": f"STL not found: {stl_path}"},
             )
             report.add_child(child)
             continue
-        piece_tf, dem_crs = _resolve_piece_transform(member, alignment, stl_path)
+        piece_tf, dem_crs = _resolve_piece_transform(country_name, alignment, stl_path)
         child = run_all_per_piece_checks(
             stl_path=stl_path,
-            country=member,
+            country=country_name,
             piece_tf=piece_tf,
             dem_crs=dem_crs,
             ne_path=ne_path,
@@ -496,6 +944,12 @@ def main():
                     help="Gate on mesh.is_volume (otherwise advisory).")
     ap.add_argument("--no-qc", action="store_true",
                     help="Skip QC entirely (faster smoke tests).")
+    ap.add_argument("--bed-mm", type=float, default=csplit.DEFAULT_BED_MM,
+                    help="Printer bed size in mm. Bead-12 splitting target.")
+    ap.add_argument("--prime-tower-mm", type=float,
+                    default=csplit.DEFAULT_PRIME_TOWER_MM,
+                    help="Prime-tower corner footprint in mm. Effective usable "
+                         "area is (bed_mm - prime_tower_mm) x bed_mm.")
     args = ap.parse_args()
 
     if args.group not in GROUPS:
@@ -632,6 +1086,7 @@ def main():
 
     succeeded, failed = [], []
     pipeline_meta_by_member: dict = {}
+    split_pieces_by_member: dict[str, list[dict]] = {}
     try:
         for member, geom_proj in member_proj.items():
             try:
@@ -643,6 +1098,33 @@ def main():
                 )
                 if isinstance(meta, dict):
                     pipeline_meta_by_member[member] = meta
+                # Bead 12: post-process the written STL into component +
+                # dovetail sub-pieces. For single-component countries that
+                # fit the bed, this is a no-op (returns one entry pointing
+                # at the original STL).
+                try:
+                    sub_pieces = split_member_stl(
+                        member, group, out_dir, meta,
+                        dem_crs=dem.crs.to_string(),
+                        bed_mm=args.bed_mm,
+                        prime_tower_mm=args.prime_tower_mm,
+                    )
+                    split_pieces_by_member[member] = sub_pieces
+                except Exception as e:
+                    print(f"\n!!! SPLIT FAILED for {member}: {e}")
+                    traceback.print_exc()
+                    # Fall back to a single sub-piece pointing at the
+                    # untouched STL, so QC + alignment still work.
+                    suffix = "_starup" if group.extrude_star.get(member, False) else "_solid"
+                    fallback_stl = os.path.join(
+                        out_dir, f"{member.replace(' ', '_')}{suffix}.stl"
+                    )
+                    split_pieces_by_member[member] = [{
+                        "label": "mainland", "component": "mainland",
+                        "stl": fallback_stl, "dovetail_neighbour": None,
+                        "cut_axis": None, "cut_coord_mm": None,
+                        "is_tab": None, "mesh_bbox_crs": None,
+                    }]
                 succeeded.append(member)
             except pipe.STLGenerationError as e:
                 print(f"\n!!! STL FAILED for {member}: {e}\n")
@@ -665,6 +1147,7 @@ def main():
     alignment = build_alignment(
         group, out_dir, args.dem, dem, member_proj,
         pipeline_meta_by_member=pipeline_meta_by_member,
+        split_pieces_by_member=split_pieces_by_member,
     )
     alignment_path = os.path.join(out_dir, "alignment.json")
     with open(alignment_path, "w") as f:
