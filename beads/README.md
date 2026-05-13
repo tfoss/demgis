@@ -17,6 +17,7 @@ Decomposes phase **E2** of [`../MIGRATION_PLAN_DRAFT.md`](../MIGRATION_PLAN_DRAF
 | 09 | [Pilot 4 — Cuba+Caribbean (multi-pair, three-way junction)](09_pilot_cuba_caribbean.md) | 01–08 |
 | 10 | [Inland water bodies (lakes + inland seas)](10_inland_water_bodies.md) | 03, 04, 05 (Cat 2B); independent for Cat 2A |
 | 11 | [Dovetail-split STL generation (feasibility investigation)](11_dovetail_split_investigation.md) | — |
+| 12 | [Country STL splitting — components + dovetail](12_country_split.md) | 11 (print-validated parameters), 01–04 |
 
 Pilot 5 (Indonesia / Malaysia / PNG) is deferred until Phase C (LCC migration) lands — no bead yet.
 
