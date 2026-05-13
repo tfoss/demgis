@@ -290,12 +290,27 @@ def split_with_dovetail(
         print(f"  cross-section at cut: perp range [{perp_lo:.2f}, "
               f"{perp_hi:.2f}] mm (width {section_width:.2f} mm, "
               f"midpoint {perp_mid_override:.2f})")
-        # Sanity: tip width must be < section width or the tab won't
-        # be fully embedded in material.
-        if tab_tip_mm >= section_width:
-            print(f"  WARNING: tab tip ({tab_tip_mm} mm) >= cross-section "
-                  f"width ({section_width:.2f} mm); tab will extend past "
-                  f"the country at the cut. Shrink tab or pick a wider "
+        # The 70% rule: tab tip width should not exceed 70% of the
+        # cross-section width. Otherwise the slot piece's material
+        # above and below the slot becomes paper-thin, the dovetail
+        # tip approaches the country's coastline (so the trapezoid
+        # north/south sides get clipped at the coast), and the joint
+        # visually degenerates into a Z-shaped cut rather than a
+        # clean trapezoidal tab. Also factor in clearance for the
+        # slot side.
+        max_tip_70 = 0.70 * section_width
+        # Slot piece's effective half-width occupied = (tab_tip/2) + clearance
+        # for the north-tip and south-tip walls. Total effective = tab_tip + 2*clearance.
+        effective_tip = tab_tip_mm + 2.0 * clearance_mm
+        if effective_tip > max_tip_70:
+            print(f"  WARNING: tab tip + 2× clearance "
+                  f"({effective_tip:.2f} mm = {effective_tip/section_width*100:.0f}% "
+                  f"of cross-section) exceeds the 70% rule "
+                  f"(max {max_tip_70:.2f} mm). The slot piece's "
+                  f"ceiling/floor material will be < "
+                  f"{(section_width - effective_tip) / 2:.2f} mm thick "
+                  f"and the joint may degenerate into a Z-shaped cut. "
+                  f"Shrink tab_tip_mm, reduce clearance, or pick a wider "
                   f"cut location.")
 
     print(f"  splitting along {cut_axis} = {cut_coord:.2f} mm")
