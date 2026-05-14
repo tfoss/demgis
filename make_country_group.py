@@ -37,6 +37,7 @@ import make_all_sa_with_vector_clip as pipe
 import ocean_precompute
 import ocean_extension as ocean_ext_mod
 import country_split as csplit
+import country_label as clabel
 from groups import GROUPS, Bridge, CountryGroup
 
 
@@ -352,6 +353,89 @@ def _make_mesh_to_wgs84(
     return mesh_to_wgs84
 
 
+# ---------------------------------------------------------------------------
+# Bead 13 — back-label helpers
+# ---------------------------------------------------------------------------
+
+def _humanize_piece_label(member: str, component_label: str) -> str:
+    """Default per-piece text for the back-side label.
+
+    - The ``mainland`` component → the country name (member).
+    - Snake-case sub-region names (``french_guiana``, ``saint_pierre``) →
+      Title Case with spaces.
+    - Anything starting with ``outlying_`` → the country name + " " + index
+      (e.g. ``France outlying_2`` → ``France II``). For now we keep the
+      raw "France outlying 2" form to match the per-piece STL filenames;
+      users can override via ``back_label_overrides``.
+    """
+    if component_label == "mainland":
+        return member
+    base = component_label.replace("_", " ")
+    parts = [w.capitalize() for w in base.split()]
+    return " ".join(parts)
+
+
+def apply_back_label_to_piece(
+    stl_path: str,
+    label_text: str,
+    font_path: Optional[str],
+    depth_mm: float = clabel.DEFAULT_RECESS_DEPTH_MM,
+) -> dict:
+    """Read ``stl_path``, recess ``label_text`` into the back face, write
+    the modified STL back to the same path.
+
+    Returns a small dict with the chosen font size + rotation + lines for
+    inclusion in alignment.json. Returns ``{"error": str}`` on failure;
+    in that case the original STL is left untouched.
+    """
+    import trimesh
+    try:
+        mesh = trimesh.load(stl_path, force="mesh", process=True)
+    except Exception as e:
+        return {"error": f"could not load STL: {e}"}
+    if not isinstance(mesh, trimesh.Trimesh):
+        return {"error": f"loaded geometry isn't a single trimesh: {type(mesh)}"}
+
+    # Use the mesh's own base footprint as the country polygon — sidesteps
+    # all WGS84 → mesh-mm transform gotchas.
+    try:
+        footprint = clabel.mesh_footprint_polygon(mesh)
+    except Exception as e:
+        return {"error": f"footprint extraction failed: {e}"}
+    if footprint.is_empty or footprint.area <= 0:
+        return {"error": "empty footprint polygon"}
+
+    try:
+        fit = clabel.fit_label_to_polygon(
+            label_text, footprint, font_path=font_path,
+        )
+    except Exception as e:
+        return {"error": f"fit_label_to_polygon failed: {e}"}
+    if fit is None:
+        return {"error": "no fit found (polygon too small for text)"}
+
+    try:
+        recessed = clabel.add_back_label_to_mesh(
+            mesh, fit.polygon, depth_mm=depth_mm,
+        )
+    except Exception as e:
+        return {"error": f"add_back_label_to_mesh failed: {e}"}
+
+    try:
+        recessed.export(stl_path)
+    except Exception as e:
+        return {"error": f"STL export failed: {e}"}
+
+    return {
+        "text": label_text,
+        "font_pt": fit.font_pt,
+        "rotation_deg": fit.rotation_deg,
+        "lines": fit.lines,
+        "anchor_xy_mm": list(fit.anchor_xy_mm),
+        "depth_mm": depth_mm,
+    }
+
+
 def split_member_stl(
     member: str,
     group: CountryGroup,
@@ -360,6 +444,7 @@ def split_member_stl(
     dem_crs: str,
     bed_mm: float = csplit.DEFAULT_BED_MM,
     prime_tower_mm: float = csplit.DEFAULT_PRIME_TOWER_MM,
+    label_font_path: Optional[str] = None,
 ) -> list[dict]:
     """Post-process the just-written ``<Member>_solid.stl`` (or ``_starup``):
 
@@ -427,12 +512,14 @@ def split_member_stl(
                 bbox = _mesh_bbox_crs_for_subpiece(mesh.bounds, pmeta)
             except Exception as e:
                 print(f"    bbox derivation failed: {e}")
-            return [{
+            pieces_out = [{
                 "label": "mainland", "component": "mainland",
                 "stl": orig_stl_path, "dovetail_neighbour": None,
                 "cut_axis": None, "cut_coord_mm": None, "is_tab": None,
                 "mesh_bbox_crs": bbox,
             }]
+            _apply_back_labels_to_pieces(member, group, pieces_out, label_font_path)
+            return pieces_out
         # Needs dovetail. Run it on the full mesh.
         print(f"    {member}: full mesh needs dovetail split.")
         dpieces = csplit.dovetail_split_to_fit(
@@ -460,6 +547,7 @@ def split_member_stl(
             print(f"    removed combined STL: {orig_stl_path}")
         except Exception:
             pass
+        _apply_back_labels_to_pieces(member, group, out_pieces2, label_font_path)
         return out_pieces2
 
     print(f"\n  Splitting {member} ({len(mesh.faces)} faces)...")
@@ -504,7 +592,7 @@ def split_member_stl(
             bbox = _mesh_bbox_crs_for_subpiece(mesh.bounds, pmeta)
         except Exception as e:
             print(f"    split: {member}: bbox derivation failed: {e}")
-        return [{
+        pieces_out = [{
             "label": "mainland",
             "component": "mainland",
             "stl": orig_stl_path,
@@ -514,6 +602,8 @@ def split_member_stl(
             "is_tab": None,
             "mesh_bbox_crs": bbox,
         }]
+        _apply_back_labels_to_pieces(member, group, pieces_out, label_font_path)
+        return pieces_out
 
     # Multi-component or needs-dovetail path. We'll emit one STL per
     # final piece. Capture the per-component PRE-rezero bounds for the
@@ -600,7 +690,46 @@ def split_member_stl(
             print(f"    removed combined STL: {orig_stl_path}")
         except Exception as e:
             print(f"    warning: could not remove {orig_stl_path}: {e}")
+    # Bead 13 — recess country/region name into the back of each piece.
+    _apply_back_labels_to_pieces(member, group, out_pieces, label_font_path)
     return out_pieces
+
+
+def _apply_back_labels_to_pieces(
+    member: str,
+    group: CountryGroup,
+    pieces: list[dict],
+    font_path: Optional[str],
+) -> None:
+    """For each piece in ``pieces``, recess a label into the back face of
+    its STL. Updates each piece dict in place with a ``back_label`` key
+    holding the fit metadata (or ``{"skipped": reason}``)."""
+    if group.disable_back_label.get(member, False):
+        for p in pieces:
+            p["back_label"] = {"skipped": "disable_back_label"}
+        return
+    overrides = group.back_label_overrides.get(member, {}) if hasattr(
+        group, "back_label_overrides") else {}
+    print(f"\n  Adding back labels to {len(pieces)} piece(s) of {member}...")
+    for piece in pieces:
+        component = piece.get("component", piece.get("label", "mainland"))
+        explicit_key = piece.get("label", component)
+        # Look up override by piece label first, then by component label.
+        text = (overrides.get(explicit_key)
+                or overrides.get(component)
+                or _humanize_piece_label(member, component))
+        result = apply_back_label_to_piece(
+            piece["stl"], text, font_path=font_path,
+        )
+        piece["back_label"] = result
+        if "error" in result:
+            print(f"    {piece['stl']}: label SKIPPED — {result['error']}")
+        else:
+            print(f"    {piece['stl']}: "
+                  f"text={result['text']!r}, "
+                  f"font_pt={result['font_pt']:.1f}, "
+                  f"rot={result['rotation_deg']:.1f}, "
+                  f"lines={len(result['lines'])}")
 
 
 def patched_process_country(country_name, group: CountryGroup, *args, **kwargs):
@@ -718,11 +847,13 @@ def build_alignment(
             continue
 
         # Regression-safe path: exactly one sub-piece pointing at the
-        # original <Member>_solid.stl. Output identical to pre-bead-12.
+        # original <Member>_solid.stl. Output identical to pre-bead-12
+        # except for the bead-13 ``back_label`` field (only present when
+        # the back-label step actually ran).
         if (len(sub_pieces) == 1
                 and sub_pieces[0]["stl"] == fallback_stl):
             sp = sub_pieces[0]
-            pieces[cname] = {
+            entry = {
                 "stl": sp["stl"],
                 "origin_crs": {"x": origin_x, "y": origin_y},
                 "ncols": ncols,
@@ -731,6 +862,9 @@ def build_alignment(
                 "is_mainland": True,
                 "mesh_bbox_crs": sp.get("mesh_bbox_crs") or mesh_bbox_crs,
             }
+            if "back_label" in sp:
+                entry["back_label"] = sp["back_label"]
+            pieces[cname] = entry
             continue
 
         # Multi-piece path. One entry per sub-piece, keyed
@@ -761,6 +895,8 @@ def build_alignment(
                 "cut_coord_mm": sp.get("cut_coord_mm"),
                 "is_tab": sp.get("is_tab"),
             }
+            if "back_label" in sp:
+                entry["back_label"] = sp["back_label"]
             pieces[piece_key] = entry
             if i == primary_idx:
                 # Bare-member key points at the primary (mainland) piece
@@ -950,6 +1086,9 @@ def main():
                     default=csplit.DEFAULT_PRIME_TOWER_MM,
                     help="Prime-tower corner footprint in mm. Effective usable "
                          "area is (bed_mm - prime_tower_mm) x bed_mm.")
+    ap.add_argument("--label-font", default=None,
+                    help="Path to a TTF/OTF font for the back-side country label "
+                         "(bead 13). Defaults to data/fonts/Montserrat-Regular.ttf.")
     args = ap.parse_args()
 
     if args.group not in GROUPS:
@@ -1108,6 +1247,7 @@ def main():
                         dem_crs=dem.crs.to_string(),
                         bed_mm=args.bed_mm,
                         prime_tower_mm=args.prime_tower_mm,
+                        label_font_path=args.label_font,
                     )
                     split_pieces_by_member[member] = sub_pieces
                 except Exception as e:

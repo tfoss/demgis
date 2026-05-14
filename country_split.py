@@ -95,6 +95,8 @@ DEFAULT_TAB_DEPTH_MM = 15.0      # for fall-back sizing only
 # bbox = (minx_lon, miny_lat, maxx_lon, maxy_lat) in WGS84.
 KNOWN_SUBREGIONS: dict[str, list[tuple[str, tuple[float, float, float, float]]]] = {
     "France": [
+        # Corsica (Mediterranean, mainland France territorial)
+        ("corsica",       (8.5, 41.3, 9.6, 43.1)),
         # French Guiana (South America)
         ("french_guiana", (-55.0, 2.0, -51.0, 6.0)),
         # Réunion (Indian Ocean)

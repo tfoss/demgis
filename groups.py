@@ -213,6 +213,17 @@ class CountryGroup:
     # Used by groups whose downstream tooling assumes one STL per member
     # and isn't ready for the multi-piece output.
     disable_component_split: dict[str, bool] = field(default_factory=dict)
+    # Bead 13 — per-member, per-piece override for the text recessed into
+    # the back of each STL. Outer key is the NE member name; inner key is
+    # the piece's component label as chosen by ``country_split``
+    # (``mainland``, ``french_guiana``, ``outlying_2``, etc.). Value is the
+    # exact text to render (with ``\n`` allowed for explicit line breaks).
+    # If unset, the per-piece label itself is used after light beautification
+    # (snake_case → Title Case, mainland → the country name).
+    back_label_overrides: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Bead 13 — per-member force-disable for the back label. True =
+    # skip recessing text into the back of this member's STLs.
+    disable_back_label: dict[str, bool] = field(default_factory=dict)
     notes: str = ""
 
 
