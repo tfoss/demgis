@@ -70,7 +70,12 @@ def manifold_clean(mesh):
     return cleaned
 
 # Copy all parameters from make_all_sa_countries.py
-GLOBAL_XY_SCALE = 0.33
+# GLOBAL_XY_SCALE = 0.80 sets the print-to-CRS ratio to ~10 km per mm.
+# Calibrated 2026-05-14 to match prior AEA production (which measured at
+# ~11.7 km/mm — France 81 mm = ~950 km, Portugal coast 48 mm = ~550 km)
+# with a slight bump to a round number. Pre-2026-05-14 the default was
+# 0.33 (~24 km/mm); see git log for the calibration analysis.
+GLOBAL_XY_SCALE = 0.80
 MIRROR_X = True
 SEA_LEVEL_M = 0.0
 SEA_PADDING_M = -50.0
