@@ -2,7 +2,7 @@
 
 **One-line goal:** For each output STL, render the country/region name as a recessed text extrusion on the back (base bottom) — auto-sized to fit, rotated to align with the country's long axis, multi-line for tiny countries — so the printed pieces are self-labeling without slicer-side post-processing.
 
-**Status:** Not started.
+**Status:** Done (2026-05-14). Implemented in `country_label.py` + tests + driver hook in `make_country_group.py`. Bundled Montserrat-Regular.ttf (Google Fonts SIL OFL, instanced from variable font). 13 new tests pass; full suite 112 passed + 1 skipped. France end-to-end produces 3 labeled STLs (mainland/french_guiana/corsica) with auto-sized + MRR-rotated labels recessed at 0.75 mm. Known cosmetic: boolean ops occasionally produce degree-4 edges at letter kerning kisses — non-blocker, FDM slicers handle gracefully.
 
 ## Context
 
