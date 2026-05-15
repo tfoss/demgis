@@ -46,6 +46,13 @@ services:
       - ${STL_OUT:-./outputs}:/outputs
       - ${HOME}/.claude:/home/demgis/.claude
       - ${HOME}/.claude.json:/home/demgis/.claude.json
+      # Mac host fonts (read-only). country_label.py looks here first
+      # for proprietary fonts the user has licensed locally (Futura,
+      # Avenir Next, Helvetica Neue, etc.). Optional — falls back to
+      # the bundled Montserrat-Regular.ttf if these paths don't exist
+      # (Linux hosts won't have them; mount points still resolve).
+      - ${HOME}/Library/Fonts:/host_fonts:ro
+      - ${MAC_SYSTEM_FONTS:-./_no_mac_system_fonts}:/host_system_fonts:ro
       # Persist conda pkgs cache so rebuilds reuse downloaded packages
       - demgis-conda-pkgs:/opt/conda/pkgs
 

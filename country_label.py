@@ -76,13 +76,42 @@ DEFAULT_FONT_PATH = os.path.join(
 """Path to the bundled Montserrat-Regular static instance (extracted from the
 Google Fonts variable font; SIL OFL — see ``data/fonts/OFL.txt``)."""
 
-# Fallback list when the bundled font is missing. DejaVu Sans ships with
-# matplotlib so it's always available in the demgis env.
+# Mac-host fonts mounted via docker-compose at /host_fonts (user's
+# ~/Library/Fonts) and /host_system_fonts (/System/Library/Fonts when
+# MAC_SYSTEM_FONTS is set in .env). Searched FIRST when looking for
+# Futura — if the user has it licensed on macOS, prefer it over the
+# bundled Montserrat.
+HOST_FONT_DIRS = ["/host_fonts", "/host_system_fonts"]
+HOST_FONT_PREFERENCES = [
+    # (basename glob, friendly description) — checked in order.
+    "Futura.ttc",       # macOS bundles Futura as a TrueType Collection
+    "Futura.ttf",
+    "Futura-Medium.ttf",
+    "Futura Medium.ttf",
+    "Futura-Book.ttf",
+    "Avenir Next.ttc",   # Avenir Next — Adrian Frutiger, similar feel
+    "AvenirNext.ttc",
+]
+
+# Fallback list when no preferred host font and the bundled font is
+# missing. DejaVu Sans ships with matplotlib so it's always available
+# in the demgis env.
 SYSTEM_FALLBACK_FONTS = [
     "/opt/conda/envs/demgis/fonts/DejaVuSans.ttf",
     "/opt/conda/envs/demgis/fonts/Ubuntu-R.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ]
+
+
+def _find_host_font() -> Optional[str]:
+    """Look for Futura (or other preferred fonts) in mounted Mac font
+    directories. Returns None if nothing matches."""
+    for fname in HOST_FONT_PREFERENCES:
+        for d in HOST_FONT_DIRS:
+            p = os.path.join(d, fname)
+            if os.path.isfile(p):
+                return p
+    return None
 
 
 DEFAULT_RECESS_DEPTH_MM = 0.75
@@ -122,12 +151,21 @@ class LabelFit:
 # ---------------------------------------------------------------------------
 
 def resolve_font_path(font_path: Optional[str] = None) -> str:
-    """Return a usable TTF path. Order: explicit ``font_path`` → bundled
-    Montserrat → system fallbacks. Raises FileNotFoundError if nothing
-    is available."""
+    """Return a usable TTF/TTC path. Order:
+      1. Explicit ``font_path`` argument (CLI override).
+      2. Mac-host fonts (Futura, Avenir Next, etc.) mounted at
+         /host_fonts and /host_system_fonts via docker-compose. Lets
+         macOS users use proprietary fonts they have licensed without
+         bundling them in the repo.
+      3. Bundled Montserrat-Regular (SIL OFL).
+      4. System fallbacks (DejaVu Sans).
+    Raises FileNotFoundError if nothing is available."""
     candidates = []
     if font_path:
         candidates.append(font_path)
+    host = _find_host_font()
+    if host:
+        candidates.append(host)
     candidates.append(DEFAULT_FONT_PATH)
     candidates.extend(SYSTEM_FALLBACK_FONTS)
     for c in candidates:
