@@ -92,6 +92,20 @@ cp <source_dir>/<country>_*.stl GOLD_STLs/<region>/
 ls -lh GOLD_STLs/<region>/<country>_*.stl
 ```
 
+## CRITICAL Workflow: Commit Often
+
+**IMPORTANT**: Commit work at natural breakpoints during a session — after landing a feature, fixing a bug, completing a coherent piece of work, or making a meaningful change to a tracked file. **Do not wait to be asked.**
+
+A natural breakpoint = a self-explanatory diff. If the commit message would have to say "and also …", split the commit.
+
+**Staging rules:**
+- Stage explicitly by filename (`git add path/to/file.py`). **Never** use `git add -A` or `git add .` — this repo regularly carries many parallel experimental files (`_diag_*.py`, `tmp/`, intermediate `_eqearth_intermediates/`, untracked artefacts) that must not get swept into a feature commit.
+- Commits only — not pushes. Pushing, force-pushing, amending published commits, or any history rewrite still requires explicit confirmation.
+
+**Identity:**
+- All prior commits on this repo use `Ted Foss <ted.foss@cellcarta.com>`.
+- The demgis container has no `~/.gitconfig`. Use a per-command override (`git -c user.name="Ted Foss" -c user.email="ted.foss@cellcarta.com" commit …`). **Never** modify the global git config.
+
 ## Python Environment
 
 **CRITICAL**: Always use the conda environment 'demgis' for running Python scripts in this project.
