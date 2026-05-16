@@ -25,6 +25,8 @@ dependencies:
   - libgfortran5
   # GUI tools (host-only — skipped if you don't need them in-container)
   - pyqt6
+  # Test runner
+  - pytest
   # pip-only deps
   - pip
   - pip:

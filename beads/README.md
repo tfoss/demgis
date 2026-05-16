@@ -19,6 +19,7 @@ Decomposes phase **E2** of [`../MIGRATION_PLAN_DRAFT.md`](../MIGRATION_PLAN_DRAF
 | 11 | [Dovetail-split STL generation (feasibility investigation)](11_dovetail_split_investigation.md) | — |
 | 12 | [Country STL splitting — components + dovetail](12_country_split.md) | 11 (print-validated parameters), 01–04 |
 | 13 | [Country-name text recessed into STL back](13_country_name_back_label.md) | 12 (per-piece labels) |
+| 14 | [Label strict containment (fix letters falling outside country)](14_label_strict_containment.md) | 13 |
 
 Pilot 5 (Indonesia / Malaysia / PNG) is deferred until Phase C (LCC migration) lands — no bead yet.
 
