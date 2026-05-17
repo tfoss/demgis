@@ -103,8 +103,8 @@ A natural breakpoint = a self-explanatory diff. If the commit message would have
 - Commits only — not pushes. Pushing, force-pushing, amending published commits, or any history rewrite still requires explicit confirmation.
 
 **Identity:**
-- All prior commits on this repo use `Ted Foss <ted.foss@cellcarta.com>`.
-- The demgis container has no `~/.gitconfig`. Use a per-command override (`git -c user.name="Ted Foss" -c user.email="ted.foss@cellcarta.com" commit …`). **Never** modify the global git config.
+- `docker-compose.yml` bind-mounts the host's `~/.gitconfig` into the container read-only — in-container commits attribute to whatever identity the host already has configured (no per-command overrides, no in-container `git config` needed). If you find yourself wanting to set identity, that mount is broken — fix the mount, don't write a fallback.
+- **Never** modify the container's git config (it's read-only by design).
 
 ## Python Environment
 

@@ -17,6 +17,10 @@
 #                                              (must be a separate mount —
 #                                              the .json sits next to the
 #                                              .claude dir, not inside it)
+#   ${HOME}/.gitconfig:/home/demgis/.gitconfig:ro
+#                                              host git identity → in-container
+#                                              commits attribute to the same
+#                                              user (read-only)
 #
 # Set in .env file at the repo root, e.g.:
 #   DEM_DATA=/Volumes/gray/DEM
@@ -46,6 +50,12 @@ services:
       - ${STL_OUT:-./outputs}:/outputs
       - ${HOME}/.claude:/home/demgis/.claude
       - ${HOME}/.claude.json:/home/demgis/.claude.json
+      # Host git identity (user.name, user.email, signing key, etc.) so
+      # in-container commits attribute to the same person as host commits.
+      # Read-only so an in-container `git config` can't surprise the host
+      # config. The container has no ~/.gitconfig of its own and no gh
+      # CLI, so this mount is the canonical identity source.
+      - ${HOME}/.gitconfig:/home/demgis/.gitconfig:ro
       # Mac host fonts (read-only). country_label.py looks here first
       # for proprietary fonts the user has licensed locally (Futura,
       # Avenir Next, Helvetica Neue, etc.). Optional — falls back to
