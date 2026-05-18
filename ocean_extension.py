@@ -73,6 +73,7 @@ from shapely.validation import make_valid
 
 import ocean_geom
 from ocean_geom import HullsOverlapError, build_sector_polygon
+from ocean_precompute import is_island_country
 
 if TYPE_CHECKING:  # pragma: no cover — purely for static typing
     from groups import CountryGroup, OceanExtension
@@ -400,7 +401,26 @@ def _discover_neighbour_names(
     geoms = list(precomputes.ne_ee.geometry.values)
     classes = precomputes.country_class
 
-    a_class = classes.get(member, "continental")
+    # Per-sub-polygon classification: if A is a multi-component NE
+    # entity (UK = GB + Northern Ireland), the whole-country class
+    # may be "continental" because one sub-polygon (NI) shares a land
+    # border with another country (ROI), even though the largest
+    # sub-polygon (GB) is a clear island. Reclassify member as
+    # "island" for ownership purposes when its largest sub-polygon
+    # is one. See bead 08 Open Question 1.
+    whole_class = classes.get(member, "continental")
+    a_class = whole_class
+    if whole_class == "continental":
+        a_subs_all = _components(member_geom_ee)
+        if len(a_subs_all) > 1:
+            largest = max(a_subs_all, key=lambda p: p.area)
+            other_geoms = [g for n, g in zip(names, geoms) if n != member]
+            if is_island_country(largest, other_geoms):
+                a_class = "island"
+                print(
+                    f"      {member}: classified as island per largest "
+                    f"sub-polygon (whole-country class was continental)"
+                )
     a_area_km2 = _polygon_area_km2_ee(member_geom_ee)
 
     candidates: set[str] = set(ext.explicit_neighbors or [])

@@ -235,7 +235,41 @@ UK_IRELAND = CountryGroup(
     name="UK_Ireland",
     members=["United Kingdom", "Ireland"],
     bridges=[],   # Irish Sea is ~80 km — too wide for our 25 km bridges
-    notes="Two-member group, no bridges. Validates simple multi-country path.",
+    # Bead 08 pilot: GB carries sectors toward France (Channel), Belgium +
+    # Netherlands (southern North Sea), and Ireland (Irish Sea). The
+    # ownership rule per OCEAN_TILE_GUIDELINES.md §Ownership rule says
+    # GB owns all four — island↔continental for FR/BE/NL, island↔island
+    # with GB larger for Ireland. NE classifies UK as continental
+    # (Northern Ireland land border with the ROI) but bead-04's multi-
+    # part decomposition operates on the largest sub-polygon (the GB
+    # island itself), restoring the island classification at compute
+    # time.
+    #
+    # min_island_area_km2 filter on the UK to drop Northern Ireland from
+    # the UK STL is intentional here: NI is rendered as part of the
+    # Ireland member's STL (geographically it sits in the same island).
+    # If left in, UK's STL would include NI as a separate component and
+    # overlap with Ireland's tile.
+    min_island_area_km2={"United Kingdom": 100_000.0},  # drop NI (~14k km²)
+    ocean_extensions={
+        "United Kingdom": [
+            OceanExtension(
+                auto_discover_neighbors=True,
+                # 1000 km default discovers Portugal / Spain / Italy /
+                # Iceland — spurious for our purpose (the GB↔Spain
+                # sector spans half of Europe). Tighten to 300 km so
+                # the discovery set is FR / BE / NL / Ireland +
+                # possibly Denmark/Norway/Germany at the margin.
+                max_distance_km=300.0,
+            ),
+        ],
+    },
+    notes="Bead 08 pilot: multi-neighbour sector union. GB owns four "
+          "sectors (France, Belgium, Netherlands, Ireland) — first "
+          "exercise of the angularly-adjacent neighbour branch of "
+          "§Edge cases. UK's min_island_area_km2 drops NI; the Ireland "
+          "tile carries NI implicitly as part of its rendering polygon. "
+          "max_distance_km=300 keeps discovery to nearby neighbours.",
 )
 
 
@@ -280,6 +314,30 @@ TIERRA_DEL_FUEGO = CountryGroup(
     # driver's resolve_capital() will return None for both members because
     # the default capitals fall outside wgs84_bbox — stars are suppressed.
     notes="Southern tip of South America. No capital stars (sub-region piece).",
+)
+
+
+SRI_LANKA = CountryGroup(
+    name="Sri_Lanka",
+    members=["Sri Lanka"],
+    # Bead 07 pilot — single island↔continental pair. SL owns the
+    # Palk Strait + Gulf of Mannar sector toward India per the
+    # ownership rule. auto_discover_neighbors lets the orchestrator
+    # find India on its own (and only India: the Maldives are well
+    # below min_neighbor_area_km2, and there's no land within
+    # max_distance_km in any other direction). No archipelago halo
+    # — SL is one main island; the Jaffna offshore islets are too
+    # small to matter visually at print scale.
+    ocean_extensions={
+        "Sri Lanka": [
+            OceanExtension(auto_discover_neighbors=True),
+        ],
+    },
+    notes="Bead 07 pilot: single-pair clean validation. SL↔India "
+          "ownership pair (island↔continental → SL owns). The Palk "
+          "Strait sector exercises multi-part decomposition (India's "
+          "full hull engulfs Adam's Bridge area, so the algorithm "
+          "must work on each country's largest sub-polygon).",
 )
 
 
@@ -354,6 +412,7 @@ GROUPS: dict[str, CountryGroup] = {
     "Denmark":          DENMARK,
     "Tierra_del_Fuego": TIERRA_DEL_FUEGO,
     "Korea_Japan":      KOREA_JAPAN,
+    "Sri_Lanka":        SRI_LANKA,
     "Cuba":             CUBA,
     "Madagascar":       MADAGASCAR,
     "France":           CountryGroup(
