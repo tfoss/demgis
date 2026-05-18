@@ -1245,6 +1245,16 @@ def main():
     #     area, and (b) appended to bridge_polys_crs_by_member so the
     #     -200m DEM-mark + 1.5mm vertex-lower pipeline (the same one
     #     Denmark uses for bridges) treats it as a low ocean slab.
+    # Bead-05 QC plumbing: collect per-member ocean intermediates into
+    # maps shaped for run_qc / qc.ocean_tile.run_all_ocean_checks. All
+    # geometries in Equal Earth (EPSG:8857). Stays empty for groups
+    # without ocean_extensions, which is the truthiness gate run_qc
+    # uses to decide whether to run the ocean checks at all.
+    ocean_extensions_ee: dict = {}
+    ocean_member_geoms_ee: dict = {}
+    ocean_neighbours_ee: dict = {}
+    ocean_sector_polys_ee: dict = {}
+
     if group.ocean_extensions:
         print(f"\nConstructing ocean extensions...")
         dem_crs_str = dem.crs.to_string()
@@ -1252,8 +1262,9 @@ def main():
             if member not in member_proj:
                 print(f"  WARNING: ocean_extension for unknown member {member}")
                 continue
+            report: dict = {}
             ocean_ee = ocean_ext_mod.compute_ocean_extension(
-                member, group, precompute.ne_ee, precompute,
+                member, group, precompute.ne_ee, precompute, report=report,
             )
             if ocean_ee is None or ocean_ee.is_empty:
                 print(f"    {member}: ocean extension empty")
@@ -1279,6 +1290,26 @@ def main():
             bridge_polys_crs_by_member.setdefault(member, []).append(
                 ocean_crs
             )
+
+            # (c) bead-05 QC: stash intermediates for run_all_ocean_checks.
+            ocean_extensions_ee[member] = ocean_ee
+            ocean_sector_polys_ee[member] = report.get("sector_polygons", [])
+            ocean_neighbours_ee[member] = report.get("neighbour_geoms", {})
+
+        # All-members EE polygons for the halo + seam checks. We pull
+        # from precompute.ne_ee (the EE-projected NE GeoDataFrame) so
+        # the seam check sees the same coastline NE knows about — not
+        # the processed (bbox-clipped, island-filtered) member geom,
+        # which could legitimately differ from the neighbour's coast
+        # at the seam (e.g. France mainland-only doesn't change the
+        # France↔Italy seam, that's an NE-level join).
+        if ocean_extensions_ee:
+            for m in group.members:
+                sel = precompute.ne_ee[precompute.ne_ee["ADMIN"] == m]
+                if sel.empty:
+                    print(f"  WARNING: {m} not found in NE EE for QC")
+                    continue
+                ocean_member_geoms_ee[m] = unary_union(list(sel.geometry.values))
 
     # 4. Render each member.
     # Resolve effective capital per member (regional override → default →
@@ -1395,6 +1426,13 @@ def main():
             member_ne_polygons_wgs84=member_wgs84,
             bridges_wgs84=bridge_polys_wgs84,
             resolved_capitals=resolved_capitals,
+            # Bead 05: ocean-tile QC inputs collected from the bead 04
+            # orchestrator above. Empty dicts when there are no ocean
+            # extensions; run_qc skips the ocean checks in that case.
+            ocean_extensions_ee=ocean_extensions_ee or None,
+            member_geoms_ee=ocean_member_geoms_ee or None,
+            ocean_neighbours_ee=ocean_neighbours_ee or None,
+            ocean_sector_polys_ee=ocean_sector_polys_ee or None,
         )
         if not qc_passed:
             return 1
