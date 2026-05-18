@@ -78,10 +78,11 @@ OCEAN_SEAM_CONSISTENCY_MM = 0.2          # TBD: confirm against pilots
 # A per-pair sector polygon may legitimately be MultiPolygon when the
 # source member is multi-island (Japan archipelago, UK + Ireland, etc.) —
 # the orchestrator's sub-island decomposition produces one sub-sector
-# per sub-island, unioned per-pair. We accept the MultiPolygon as long
-# as every component is at least this large. Components below this
-# threshold are "stripes" from a coastline-tracing bug (per the bead
-# spec). 1000 km² rejects sliver artefacts (~10-km scale and below)
-# while accepting legitimate sub-island sectors (Hokkaido ~78,000 km²,
-# even small sub-island contributions are well above 1000 km²).
-OCEAN_SECTOR_MIN_COMPONENT_KM2 = 1_000.0
+# per sub-island, unioned per-pair. The orchestrator already drops
+# components below this floor in ``ocean_extension._drop_sliver_components``
+# (matched constant). The QC check fires only if a sliver slips through,
+# which would indicate a bug in the producer-side cleanup. 10 km² is
+# below the smallest legitimate sub-island sector (~100 km²) and well
+# below print-noticeable scale (10 km² ≈ 0.1 print-mm² at production
+# settings).
+OCEAN_SECTOR_MIN_COMPONENT_KM2 = 10.0

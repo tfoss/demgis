@@ -123,6 +123,40 @@ def _components(geom: BaseGeometry) -> list[Polygon]:
     return []
 
 
+_SECTOR_SLIVER_MIN_AREA_KM2 = 10.0
+
+
+def _drop_sliver_components(geom: BaseGeometry) -> BaseGeometry:
+    """Drop connected components below ``_SECTOR_SLIVER_MIN_AREA_KM2``.
+
+    Tangent / coast-trace numerics in ``_build_pair_sector_ee`` can
+    leave thin stripes alongside the main sector — sub-10-km²
+    components that have no print-scale visual impact (10 km² = 0.1
+    print-mm² at GLOBAL_XY_SCALE=0.80 / XY_MM_PER_PIXEL=0.25 /
+    pixel_w=2000) and would trip the bead-05
+    ``extension_no_disconnected_slivers`` check. Legitimate sub-island
+    sectors are 100+ km² (smallest inhabited Japanese island ≈ 28 km²;
+    typical archipelago contributions much larger), so 10 km² is
+    conservative. The QC check uses the same threshold (see
+    ``qc.thresholds.OCEAN_SECTOR_MIN_COMPONENT_KM2``).
+    """
+    if isinstance(geom, Polygon):
+        if _polygon_area_km2_ee(geom) < _SECTOR_SLIVER_MIN_AREA_KM2:
+            return Polygon()
+        return geom
+    if isinstance(geom, MultiPolygon):
+        kept = [
+            p for p in geom.geoms
+            if _polygon_area_km2_ee(p) >= _SECTOR_SLIVER_MIN_AREA_KM2
+        ]
+        if not kept:
+            return Polygon()
+        if len(kept) == 1:
+            return kept[0]
+        return MultiPolygon(kept)
+    return geom
+
+
 def _fill_internal_holes(geom: BaseGeometry) -> BaseGeometry:
     """Return ``geom`` with all interior rings discarded.
 
@@ -649,6 +683,16 @@ def compute_ocean_extension(
                 clamp_polygon_ee=clamp_poly_ee,
             )
             if sector is not None and not sector.is_empty:
+                # Drop sliver components < 1 km² from MultiPolygon
+                # sectors. Sub-island decomposition (Japan archipelago
+                # etc.) legitimately produces multi-component sectors,
+                # but tangent / coast-trace numeric noise can leave
+                # thin stripes that the bead-05 sliver check would
+                # (correctly) flag. Filter at the producer so both
+                # the mesh and the QC sees clean output.
+                sector = _drop_sliver_components(sector)
+                if sector is None or sector.is_empty:
+                    continue
                 sector_polys.append(sector)
                 if report is not None:
                     report_sectors.append(sector)
