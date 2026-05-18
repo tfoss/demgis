@@ -1310,6 +1310,34 @@ def process_country(
     # vector-clip extent.
     _premirror_bounds_mm = solid.bounds.copy()
 
+    # Write per-country footprint polygon (post-scale, post-mirror, same
+    # mesh-mm frame as the exported STL) to a sidecar GeoJSON. Bead 13's
+    # back-label step uses this as the authoritative country outline so
+    # fit_label_to_polygon stops over-fitting against a coarse concave hull.
+    try:
+        from shapely.affinity import scale as _affscale, translate as _afftrans
+        from shapely.geometry import mapping as _shp_mapping
+        _poly_post = country_geom_mm
+        if GLOBAL_XY_SCALE != 1.0:
+            _poly_post = _affscale(_poly_post, xfact=GLOBAL_XY_SCALE,
+                                   yfact=GLOBAL_XY_SCALE, origin=(0, 0))
+        if MIRROR_X:
+            _poly_post = _affscale(_poly_post, xfact=-1, yfact=1, origin=(0, 0))
+            # Match the mesh's shift-to-zero (see block below).
+            _poly_post = _afftrans(
+                _poly_post,
+                xoff=float(_premirror_bounds_mm[1, 0]) * GLOBAL_XY_SCALE,
+                yoff=0.0,
+            )
+        _footprint_path = os.path.join(
+            output_dir,
+            f"{country_name.replace(' ', '_')}_footprint_mm.geojson",
+        )
+        with open(_footprint_path, "w") as _fp:
+            json.dump(_shp_mapping(_poly_post), _fp)
+    except Exception as _e:
+        print(f"  warning: could not write footprint sidecar: {_e}")
+
     # Scale & mirror
     if GLOBAL_XY_SCALE != 1.0:
         solid.apply_scale([GLOBAL_XY_SCALE, GLOBAL_XY_SCALE, 1.0])

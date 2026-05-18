@@ -375,20 +375,63 @@ def _humanize_piece_label(member: str, component_label: str) -> str:
     return " ".join(parts)
 
 
+def _load_country_footprint_sidecar(
+    stl_path: str, member: str
+) -> Optional["shapely.geometry.base.BaseGeometry"]:
+    """Look for ``<dir>/<Member>_footprint_mm.geojson`` next to ``stl_path``
+    (written by ``pipe.process_country``). Returns the loaded shapely
+    polygon in post-scale, post-mirror mesh-mm, or None if absent/invalid.
+    """
+    from shapely.geometry import shape as _shp_shape
+    sidecar = os.path.join(
+        os.path.dirname(stl_path),
+        f"{member.replace(' ', '_')}_footprint_mm.geojson",
+    )
+    if not os.path.isfile(sidecar):
+        return None
+    try:
+        with open(sidecar) as f:
+            data = json.load(f)
+        geom = _shp_shape(data)
+        if not geom.is_valid:
+            geom = make_valid(geom)
+        if geom.is_empty or geom.area <= 0:
+            return None
+        return geom
+    except Exception:
+        return None
+
+
 def apply_back_label_to_piece(
     stl_path: str,
     label_text: str,
     font_path: Optional[str],
     depth_mm: float = clabel.DEFAULT_RECESS_DEPTH_MM,
+    member: Optional[str] = None,
 ) -> dict:
     """Read ``stl_path``, recess ``label_text`` into the back face, write
     the modified STL back to the same path.
+
+    Footprint preference: the per-country sidecar
+    ``<Member>_footprint_mm.geojson`` (authoritative coastline, written by
+    ``pipe.process_country``) intersected with this piece's mesh bbox. If
+    the sidecar is missing or the intersection is empty, falls back to
+    ``clabel.mesh_footprint_polygon`` (concave hull of the mesh's base
+    vertices).
+
+    The label is fit and subtracted as a back-side recess. Because the
+    label is read from the −Z side of the part, the footprint is X-
+    mirrored around its centroid before fitting and the resulting placed
+    polygon is X-mirrored back before extrusion — so from the back view
+    the text reads left-to-right.
 
     Returns a small dict with the chosen font size + rotation + lines for
     inclusion in alignment.json. Returns ``{"error": str}`` on failure;
     in that case the original STL is left untouched.
     """
     import trimesh
+    from shapely.affinity import scale as _affscale
+    from shapely.geometry import box as _shp_box
     try:
         mesh = trimesh.load(stl_path, force="mesh", process=True)
     except Exception as e:
@@ -396,27 +439,52 @@ def apply_back_label_to_piece(
     if not isinstance(mesh, trimesh.Trimesh):
         return {"error": f"loaded geometry isn't a single trimesh: {type(mesh)}"}
 
-    # Use the mesh's own base footprint as the country polygon — sidesteps
-    # all WGS84 → mesh-mm transform gotchas.
-    try:
-        footprint = clabel.mesh_footprint_polygon(mesh)
-    except Exception as e:
-        return {"error": f"footprint extraction failed: {e}"}
+    footprint = None
+    if member:
+        country_poly = _load_country_footprint_sidecar(stl_path, member)
+        if country_poly is not None:
+            xmin, ymin, _ = mesh.bounds[0]
+            xmax, ymax, _ = mesh.bounds[1]
+            # Buffer slightly so dovetail-tab edges don't artificially clip
+            # the polygon — the fit's own padding handles real margins.
+            bbox = _shp_box(xmin - 1.0, ymin - 1.0, xmax + 1.0, ymax + 1.0)
+            try:
+                clipped = country_poly.intersection(bbox)
+                if not clipped.is_empty and clipped.area > 0:
+                    footprint = clipped if clipped.is_valid else make_valid(clipped)
+            except Exception:
+                pass
+
+    if footprint is None:
+        try:
+            footprint = clabel.mesh_footprint_polygon(mesh)
+        except Exception as e:
+            return {"error": f"footprint extraction failed: {e}"}
     if footprint.is_empty or footprint.area <= 0:
         return {"error": "empty footprint polygon"}
 
+    # Mirror the footprint around its centroid so the fit happens in the
+    # back-view coordinate system. The placed polygon comes back in that
+    # mirrored frame and we mirror it again before subtraction.
+    mirror_x = float(footprint.centroid.x)
+    footprint_mirrored = _affscale(footprint, xfact=-1.0, yfact=1.0,
+                                   origin=(mirror_x, 0.0))
+
     try:
         fit = clabel.fit_label_to_polygon(
-            label_text, footprint, font_path=font_path,
+            label_text, footprint_mirrored, font_path=font_path,
         )
     except Exception as e:
         return {"error": f"fit_label_to_polygon failed: {e}"}
     if fit is None:
         return {"error": "no fit found (polygon too small for text)"}
 
+    placed_mesh_space = _affscale(fit.polygon, xfact=-1.0, yfact=1.0,
+                                  origin=(mirror_x, 0.0))
+
     try:
         recessed = clabel.add_back_label_to_mesh(
-            mesh, fit.polygon, depth_mm=depth_mm,
+            mesh, placed_mesh_space, depth_mm=depth_mm,
         )
     except Exception as e:
         return {"error": f"add_back_label_to_mesh failed: {e}"}
@@ -426,12 +494,15 @@ def apply_back_label_to_piece(
     except Exception as e:
         return {"error": f"STL export failed: {e}"}
 
+    # Report anchor in mesh-mm (un-mirrored) and rotation as it lives on the
+    # actual STL (sign flips with the X-mirror).
+    anchor_mesh_x = 2.0 * mirror_x - float(fit.anchor_xy_mm[0])
     return {
         "text": label_text,
         "font_pt": fit.font_pt,
-        "rotation_deg": fit.rotation_deg,
+        "rotation_deg": -float(fit.rotation_deg),
         "lines": fit.lines,
-        "anchor_xy_mm": list(fit.anchor_xy_mm),
+        "anchor_xy_mm": [anchor_mesh_x, float(fit.anchor_xy_mm[1])],
         "depth_mm": depth_mm,
     }
 
@@ -719,7 +790,7 @@ def _apply_back_labels_to_pieces(
                 or overrides.get(component)
                 or _humanize_piece_label(member, component))
         result = apply_back_label_to_piece(
-            piece["stl"], text, font_path=font_path,
+            piece["stl"], text, font_path=font_path, member=member,
         )
         piece["back_label"] = result
         if "error" in result:
@@ -1317,7 +1388,11 @@ def main():
     if not args.no_qc and succeeded:
         qc_passed = run_qc(
             group, out_dir, alignment, args.qc_strict,
-            member_ne_polygons_wgs84=member_ne_original,
+            # Use the processed geometry (post-bbox-clip, post-island-filter)
+            # so QC visuals show only what the STL is actually meant to
+            # contain, not the dropped Corsica / French Guiana / Bornholm /
+            # etc. that the group config deliberately excluded.
+            member_ne_polygons_wgs84=member_wgs84,
             bridges_wgs84=bridge_polys_wgs84,
             resolved_capitals=resolved_capitals,
         )

@@ -356,6 +356,14 @@ GROUPS: dict[str, CountryGroup] = {
     "Korea_Japan":      KOREA_JAPAN,
     "Cuba":             CUBA,
     "Madagascar":       MADAGASCAR,
-    "France":           CountryGroup(name="France", members=["France"]),
+    "France":           CountryGroup(
+        name="France",
+        members=["France"],
+        # Limit to mainland: drop Corsica (~8,700 km²) and French Guiana
+        # (~83,500 km²). Mainland is ~544,000 km², stays. Corsica and
+        # French Guiana will be their own groups.
+        min_island_area_km2={"France": 100000.0},
+    ),
     "Germany":          CountryGroup(name="Germany", members=["Germany"]),
+    "Tajikistan":       CountryGroup(name="Tajikistan", members=["Tajikistan"]),
 }
