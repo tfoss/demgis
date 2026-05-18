@@ -918,10 +918,24 @@ def fit_label_to_polygon(
     best: Optional[LabelFit] = None
     best_pt = 0.0
     best_rotation = mrr_rotation
-    # Slight tiebreaker bonus for rotations near 0° (horizontal reads more
-    # naturally). 5 % bonus per 1.0 of "horizontalness" cosine value.
+    # Tiebreaker bonus combining two preferences:
+    #   * horizontalness — 5 % bonus when rot is near 0° or 90° (reads
+    #     more naturally than 45°)
+    #   * MRR alignment — 10 % bonus when rot is near the MRR long-axis
+    #     direction (gives elongated countries like Chile / Vietnam /
+    #     Sweden a label that reads along their natural axis instead
+    #     of slightly off it). This dominates the horizontalness term
+    #     when MRR is far from 0° or 90°.
+    #
+    # The cos(2·θ) form gives a peak at θ = 0 and θ = ±90°, and a
+    # minimum at θ = ±45°. mrr_rot - rot is normalised modulo 180°
+    # so an MRR angle of -75° and a rotation of +105° score the same
+    # bonus (same axis direction).
     def _rotation_bonus(rot: float) -> float:
-        return 1.0 + 0.05 * math.cos(math.radians(2.0 * rot))  # peaks at 0° and 90°… use cos(2θ) so 0° wins over 45°
+        horiz = 1.0 + 0.05 * math.cos(math.radians(2.0 * rot))
+        mrr_offset = _normalize_rotation(rot - mrr_rotation)
+        mrr = 1.0 + 0.10 * math.cos(math.radians(2.0 * mrr_offset))
+        return horiz * mrr
 
     for rotation_deg in candidate_rotations:
         for split in splits:

@@ -112,14 +112,24 @@ def test_fit_label_country_polygon_single_line_for_plenty_of_space():
 
 
 def test_fit_label_multiline_for_small_square_country():
-    """Switzerland (12 × 12 mm) is too small for "Switzerland" on one line at
-    the min font size — the fitter falls back to multi-line."""
+    """Switzerland (12 × 12 mm) is too small for "Switzerland" on one line
+    at the min font size on the horizontal/vertical axes — the v3
+    algorithm fits it diagonally instead, giving a single line at
+    ~7.3 pt rotated -45°. Either of three outcomes is acceptable:
+    multi-line split, fallback to the min font size, or a small
+    diagonal single-line fit (>= min_font_pt). The algorithm's job is
+    to pick the most legible option for the polygon; this test just
+    confirms it produces *some* valid fit rather than a None.
+    """
     country = Polygon([(0, 0), (12, 0), (12, 12), (0, 12)])
     fit = cl.fit_label_to_polygon("Switzerland", country)
     assert fit is not None
-    # Either multi-line split kicked in OR the fallback path took over
-    # (font_pt = fallback_min_pt) — both are acceptable outcomes.
-    assert len(fit.lines) >= 2 or fit.font_pt <= cl.DEFAULT_MIN_FONT_PT
+    assert fit.font_pt >= cl.DEFAULT_MIN_FONT_PT
+    # And the fit must be strictly inside the polygon (v3 contract).
+    assert country.contains(fit.polygon), (
+        f"fit polygon escaped country bounds: rotation={fit.rotation_deg}, "
+        f"font_pt={fit.font_pt}"
+    )
 
 
 def test_fit_label_rotation_aligns_with_mrr_long_axis():
