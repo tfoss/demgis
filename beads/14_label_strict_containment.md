@@ -21,7 +21,13 @@
 - `test_fit_label_multiline_for_small_square_country`: Switzerland 12×12 mm. v3 fits "Switzerland" single-line at −45° at 7.29 pt; test expected multi-line OR ≤ 6 pt fallback. The v3 outcome is arguably *better* (diagonal glyph fit) but the test premise is outdated.
 - `test_fit_label_rotation_aligns_with_mrr_long_axis`: 30×100 vertical strip, "Tall". v3 picks rotation −75° (gives 71.7 pt) over MRR-aligned 90° because the rotation grid finds a slightly larger font at −75°. This IS a label-readability regression — on a tall thin country the label reads tilted 15° off-vertical instead of along the long axis. Likely fix: weight the rotation bonus toward MRR direction more strongly (`cos(2·(rot − mrr_angle))` at 0.10 weight instead of `cos(2·rot)` at 0.05), or restrict candidate rotations to MRR ± 30°.
 
-Multi-country smoke regen (France, Tajikistan, Germany, Denmark) still pending — needs DEMs + driver invocation outside the container.
+**Smoke regen landed (2026-05-18):** `make_country_group --group {France, Tajikistan, Germany, Denmark}` all four succeeded against `world_2km_eqearth.tif`, all four QC reports pass (passed=4, failed=0). New back-label footprint sidecar (`<Country>_footprint_mm.geojson`, landed in `19f52bf`) consumed in all four runs. Label fits — strictly contained by construction (v3.1 `fit_label_to_polygon` only returns non-None when strict containment holds):
+- France: 70.7 pt at +15°, single line
+- Tajikistan: 30.2 pt at 0° (matches the v3 unit-test result, confirming the rasterised glyph search on the real coastline matches the synthetic Wakhan-corridor test geometry)
+- Germany: 47.5 pt at +60° (tilted-vertical along MRR long axis)
+- Denmark: 12.1 pt at +75° (multi-island bridged mesh: MRR aligns along Jutland; font drops because Jutland is a narrow vertical strip — same readability issue as `test_fit_label_rotation_aligns_with_mrr_long_axis` open question, surfaces on a real country)
+
+Outputs under `STLs/{France,Tajikistan,Germany,Denmark}/20260518T13*/`.
 
 ## Context
 
