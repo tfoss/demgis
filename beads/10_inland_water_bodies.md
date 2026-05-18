@@ -2,7 +2,15 @@
 
 **One-line goal:** Define and implement how non-ocean water bodies (Caspian, Great Lakes, Baikal, Black Sea, Victoria, Tahoe, Titicaca, …) are rendered, without forcing them through the §5 ocean-extension machinery.
 
-**Status:** Not started
+**Status:** Cat 2A is implicit-by-layer-choice; Cat 2B is real remaining work.
+
+**Cat 2A — landed (2026-05-18, `tests/test_inland_water_bodies.py`).** No code change was needed: the driver loads `ne_10m_admin_0_countries.shp` (the **no-holes** variant), which already absorbs single-country lakes into the surrounding country polygon. The country mesh covers the lake area + Copernicus GLO-30 radar gives a flat surface at the lake's true elevation = Cat 2A as specified. The new test file pins this property on 8 reference lakes (Baikal, Ladoga, Onega, Great Bear, Great Slave, Winnipeg, Balkhash, Vänern). The pre-existing "polygon-hole-fill" wording in the deliverables section assumed the with-lakes layer was being used; that's not the case, so the patch is moot. (One thing the test surfaced: NE's `_with_lakes` layer is inconsistent — some lakes are punched as holes there, others aren't (Balkhash, Aral, Lake Malawi stay as land). So switching the driver to that layer would not actually fix anything cleanly.)
+
+**Cat 2B — open.** Caspian, Black Sea, Great Lakes ×5, Lake Victoria, Tanganyika, Malawi are NOT yet rendered correctly:
+- Caspian + Black Sea are absent from both NE country layers (marine classification); they print as empty space today.
+- The multi-country lakes (Erie, Superior, Victoria, Tanganyika) get absorbed entirely into one of their bordering countries by the no-holes layer (e.g. Lake Erie ends up entirely in the USA, not USA+Canada). Geographically wrong but reproducible — pinned by `test_cat_2b_lake_currently_absorbed_into_one_country` so a future Cat 2B fix flips it cleanly.
+
+Real Cat 2B work still ahead: introduce a water-body member type (or repurpose `CountryGroup` with a lake polygon as the "country"); wire up `seam_consistency` between water-body and bordering country tiles (consumer side of the bead-05 QC report dict landed in `f5bc8ed`); decide on NE sources for Caspian / Black Sea (likely `ne_10m_geography_marine_polys.shp`, which isn't in `data/ne/` yet — needs download).
 
 ## Context
 
