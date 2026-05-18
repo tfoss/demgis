@@ -317,6 +317,37 @@ TIERRA_DEL_FUEGO = CountryGroup(
 )
 
 
+CUBA_CARIBBEAN = CountryGroup(
+    name="Cuba_Caribbean",
+    members=["Cuba", "Jamaica", "Haiti", "Dominican Republic"],
+    # Bead 09 pilot: multi-pair, three-way junction. Cuba owns all
+    # five ocean pairs (island↔continental for USA + Mexico;
+    # island↔island/larger for Jamaica + Haiti + DR — Cuba ~110k km²
+    # comfortably larger than each).
+    #
+    # auto_discover_neighbors at max_distance_km=600 catches USA
+    # (Florida ~150 km), Mexico Yucatán (~200 km), Jamaica (~140 km),
+    # Hispaniola (~80 km) and not much else. Bahamas and Cayman are
+    # below the default min_neighbor_area_km2 (10,000) so they'll be
+    # subtracted as third-party land at step 3.6 rather than becoming
+    # ownership partners — matches bead OQ-1 "Cayman almost certainly
+    # fails 2500 km²; Bahamas main islands borderline".
+    ocean_extensions={
+        "Cuba": [
+            OceanExtension(
+                auto_discover_neighbors=True,
+                max_distance_km=600.0,
+            ),
+        ],
+    },
+    notes="Bead 09 pilot: three-way junctions. Cuba owns all "
+          "pairs. Jamaica + Haiti + DR are participants for "
+          "seam_consistency; their tiles are halo-only on the "
+          "Cuba-facing side. Bahamas / Cayman / Turks below "
+          "min_neighbor_area_km2 → third-party land.",
+)
+
+
 SRI_LANKA = CountryGroup(
     name="Sri_Lanka",
     members=["Sri Lanka"],
@@ -413,6 +444,7 @@ GROUPS: dict[str, CountryGroup] = {
     "Tierra_del_Fuego": TIERRA_DEL_FUEGO,
     "Korea_Japan":      KOREA_JAPAN,
     "Sri_Lanka":        SRI_LANKA,
+    "Cuba_Caribbean":   CUBA_CARIBBEAN,
     "Cuba":             CUBA,
     "Madagascar":       MADAGASCAR,
     "France":           CountryGroup(
