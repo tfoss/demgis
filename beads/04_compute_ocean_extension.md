@@ -2,7 +2,7 @@
 
 **One-line goal:** Implement the top-level driver that turns `(member, group, all_ne)` into a single ocean-extension polygon by composing beads 01–03, then hand the result to `make_country_group.py`'s existing `bridge_polys_crs` machinery.
 
-**Status:** Not started
+**Status:** Done (2026-05-12, `3691e08`). Implemented in `ocean_extension.py`; driver patched. Follow-ups: spec corrections `9d32bc8`, halo redesign `2c18970`, relevance-disc neighbour clip `f11e70e`, bead-05 QC report plumbing `f5bc8ed`.
 
 ## Context
 

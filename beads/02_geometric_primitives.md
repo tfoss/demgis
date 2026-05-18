@@ -2,7 +2,7 @@
 
 **One-line goal:** Implement the three pure-geometry functions that turn a pair of Equal-Earth-projected country polygons into the ocean-sector polygon between them, per `OCEAN_TILE_GUIDELINES.md §Algorithm` step 3.
 
-**Status:** Not started
+**Status:** Done (2026-05-12, `1ffb3d6`). Implemented in `ocean_geom.py` (tangents, coast tracing, sector polygon); see also spec-correction follow-up `9d32bc8`.
 
 ## Context
 This is the meatiest geometric stage of the algorithm: convert "A owns ocean toward B" into a closed polygon bounded by A's real coast on the near side, B's real coast on the far side, and the two outer common tangent segments between A's and B's convex hulls connecting them. The tangents fix the angular extent ("which slice of A's perimeter is the B-facing side?"); the coast trace then replaces each hull edge with the country's actual coastline so concave features — Greek gulfs, Norwegian fjords, the Bristol Channel — are preserved as ocean intentionally (guidelines step 3.2). The "side facing B" disambiguation uses the mean-distance test from guidelines step 3.2: of the two boundary arcs the tangent contact points split A's exterior into, the one with smaller mean distance to B is the B-facing arc. Operates entirely on **Equal-Earth-projected** shapely polygons (see bead 04's CRS decision) — no further CRS conversion, no DEM, no mesh.

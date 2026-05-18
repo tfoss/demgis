@@ -2,7 +2,7 @@
 
 **One-line goal:** Implement the five ocean-specific QC checks from `MIGRATION_PLAN_DRAFT.md §5d` and wire them into `make_country_group.py` so each generated group emits a structured pass/fail report alongside `qc.json`.
 
-**Status:** Not started
+**Status:** Done (2026-05-12, `2661584`). Five ocean-tile QC checks (seam_consistency, ownership_unique, halo_present, extension_no_disconnected_slivers, override_polygon_provenance) wired into `make_country_group.py`. Producer-side QC report plumbing landed in `f5bc8ed`; consumer-side wiring of the report dict into the seam/halo checks is still TODO.
 
 ## Context
 

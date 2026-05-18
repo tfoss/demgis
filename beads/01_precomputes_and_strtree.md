@@ -2,7 +2,7 @@
 
 **One-line goal:** Land the three load-bearing primitives that every subsequent ocean-tile bead depends on: `is_landlocked`, `is_island_country`, and a process-wide `STRtree` over all NE land polygons.
 
-**Status:** Not started
+**Status:** Done (2026-05-12, `692ee85`). Implemented in `ocean_precompute.py` (`is_landlocked`, `is_island_country`, STRtree, EE reproject); see also spec-correction follow-up `9d32bc8`.
 
 ## Context
 

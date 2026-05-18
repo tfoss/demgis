@@ -2,7 +2,7 @@
 
 **One-line goal:** Swap the bbox-based `OceanExtension` dataclass in `groups.py` for the field-based schema in `OCEAN_TILE_GUIDELINES.md §Schema`, without changing driver behaviour yet.
 
-**Status:** Not started
+**Status:** Done (2026-05-12, `0f4f1a9`). Hard-break schema migration of `OceanExtension` in `groups.py`.
 
 ## Context
 
