@@ -275,31 +275,19 @@ need_france = pytest.mark.skipif(
 )
 
 
-@need_france
-def test_real_france_splits_into_mainland_and_outlying():
-    """The real France_solid.stl has 4 components; split_by_components
-    must keep at least the mainland and one outlying territory."""
-    mesh = trimesh.load(FRANCE_STL)
-    assert isinstance(mesh, trimesh.Trimesh)
-    pieces = cs.split_by_components(mesh, country="France")
-    assert len(pieces) >= 2
-    labels = {p.label for p in pieces}
-    assert "mainland" in labels
-
-
-@need_france
-def test_real_france_mainland_bbox_much_smaller_than_global():
-    """The current France_solid.stl has a 248×240 mm bbox because the
-    components scatter across the globe. The mainland-only piece must be
-    much smaller than that — < 100 mm on the long side."""
-    mesh = trimesh.load(FRANCE_STL)
-    pieces = cs.split_by_components(mesh, country="France")
-    mainland = next(p for p in pieces if p.label == "mainland")
-    extents = mainland.mesh.extents
-    long_side = max(extents[0], extents[1])
-    assert long_side < 100.0, (
-        f"mainland long side {long_side:.1f} mm — looks like the global bbox bug"
-    )
+# Note: the previous two tests on this real STL —
+# ``test_real_france_splits_into_mainland_and_outlying`` and
+# ``test_real_france_mainland_bbox_much_smaller_than_global`` — guarded
+# the pre-2026-05 behaviour where France_solid.stl included Corsica +
+# French Guiana + Réunion as separate components scattered across the
+# globe (248×240 mm bbox). The France entry in ``groups.py`` now sets
+# ``min_island_area_km2={"France": 100000.0}`` to drop everything but
+# mainland at the polygon-clip stage, so the resulting STL is a single
+# component by construction. Multi-component split logic is exercised
+# end-to-end by the five synthetic ``test_split_by_components_*`` cases
+# above; there's nothing real-France-specific left to assert for those
+# two cases. ``test_real_france_mainland_fits_bed`` remains because the
+# bed-fit check is genuinely about the producer's output dimensions.
 
 
 @need_france
