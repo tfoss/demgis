@@ -444,6 +444,7 @@ def compute_ocean_extension(
     group: "CountryGroup",
     all_ne_ee: gpd.GeoDataFrame,
     precomputes: "PrecomputeBundle",
+    report: Optional[dict] = None,
 ) -> BaseGeometry:
     """Compute the ocean extension polygon for ``member`` in ``group``,
     returned as an Equal Earth (EPSG:8857) geometry.
@@ -469,6 +470,24 @@ def compute_ocean_extension(
 
     Returns Polygon / MultiPolygon (or empty Polygon when the algorithm
     determines no extension is warranted).
+
+    If ``report`` is provided, the function populates it with bead-05 QC
+    inputs that aren't otherwise observable from the return value:
+
+      * ``"sector_polygons"`` — list of per-pair sector polygons (one per
+        qualifying neighbour, in source order). Empty for landlocked /
+        unconfigured members.
+      * ``"neighbour_geoms"`` — ``{neighbour_name -> EE Polygon}`` for
+        every neighbour that produced a sector. Pre-relevance-disc clip
+        (i.e. the full NE geom), since that's what the QC seam check
+        compares against.
+      * ``"halo"`` — the EE halo geometry (empty Polygon when
+        ``island_halo_km == 0``).
+
+    The dict is filled in-place; the caller passes an empty ``{}`` and
+    reads the fields after the function returns. When multiple
+    OceanExtension entries are present for one member, the report
+    fields aggregate across them in source order.
     """
     classes = precomputes.country_class
 
@@ -504,6 +523,12 @@ def compute_ocean_extension(
     other_land_union = _safe_union(list(other_ne.geometry.values))
 
     per_extension_polygons: list[BaseGeometry] = []
+    # Bead-05 QC plumbing: when the caller passes a report dict, we
+    # accumulate the intermediate per-pair sector polygons + neighbour
+    # geoms + halo across all OceanExtension entries for this member.
+    report_sectors: list[BaseGeometry] = []
+    report_neighbours: dict[str, BaseGeometry] = {}
+    report_halos: list[BaseGeometry] = []
 
     for ext in extensions:
         # Override path: hand-authored polygon replaces the algorithm.
@@ -534,6 +559,8 @@ def compute_ocean_extension(
                 halo = make_valid(halo)
         else:
             halo = Polygon()  # empty — no halo contribution
+        if report is not None:
+            report_halos.append(halo)
 
         # ---- Step 2: neighbour discovery.
         neighbour_names = _discover_neighbour_names(
@@ -623,6 +650,13 @@ def compute_ocean_extension(
             )
             if sector is not None and not sector.is_empty:
                 sector_polys.append(sector)
+                if report is not None:
+                    report_sectors.append(sector)
+                    # Record the neighbour's FULL EE geom (pre-relevance-
+                    # clip) for the QC seam check. If the same neighbour
+                    # appears under multiple OceanExtension entries we
+                    # keep the first; the geom is identical anyway.
+                    report_neighbours.setdefault(cand, B_full)
 
         # ---- Step 4: union halo + sector polygons.
         combined = _safe_union([halo] + sector_polys)
@@ -640,4 +674,10 @@ def compute_ocean_extension(
     # Union all OceanExtension entries for this member (when there's
     # more than one — rare, but the schema permits it).
     result = _safe_union(per_extension_polygons)
+
+    if report is not None:
+        report["sector_polygons"] = report_sectors
+        report["neighbour_geoms"] = report_neighbours
+        report["halo"] = _safe_union(report_halos) if report_halos else Polygon()
+
     return result
