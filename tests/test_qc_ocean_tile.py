@@ -104,14 +104,21 @@ def test_seam_consistency_passes_when_extension_meets_neighbour_exactly(
 def test_seam_consistency_fires_on_simplification_drift(
     island_a: Polygon, island_b: Polygon
 ):
-    """Deliberate fault: A's extension stops 500 m short of B (simulating
-    a VECTOR_SIMPLIFY_DEGREES mismatch). 500 m >> 0.6 m threshold."""
+    """Deliberate fault: A's extension stops 500 m short of B
+    (simulating a VECTOR_SIMPLIFY_DEGREES mismatch). At the default
+    print-mm threshold (0.2 print-mm ≈ 4848 m of CRS at scale 0.33),
+    500 m of drift is below threshold, so we pass a tighter
+    ``threshold_mm`` here to exercise the fail path. The seam-capture
+    buffer (2 km, fixed) comfortably covers the 500 m drift.
+    """
     # Extension stops at x = +399_500 instead of +400_000 → ~500 m gap.
     ext = box(100_000.0, -100_000.0, 399_500.0, 100_000.0)
+    # 0.01 print-mm at default scale 0.33 / 0.25 / 2000 ≈ 242 m of CRS.
     result = seam_consistency(
         ext_geom=ext, member="A", group_name="G",
         neighbour_geoms={"B": island_b},
         member_geom=island_a,
+        threshold_mm=0.01,
     )
     assert not result.passed, (
         "expected seam_consistency to fire on 500 m drift; "
@@ -130,7 +137,13 @@ def test_seam_consistency_multi_neighbour_via_aggregator(
     individual results record each pair separately.
     """
     east_arm = box(100_000.0, -100_000.0, 400_000.0, 100_000.0)
-    # Drift on the C arm: stops 800 m short of C.
+    # Drift on the C arm: stops 800 m short of C. 800 m is below the
+    # 0.2-print-mm default threshold; we pass an explicit tight
+    # ``global_xy_scale`` (1.0) so the threshold in CRS-m drops to
+    # 2 * pixel_w/(xy_mm_per_pixel * 1.0) * 0.2 / 1000 = ... actually
+    # just pass tight kwargs that produce ≈500-m threshold so 800-m
+    # drift exceeds it. With xy_mm_per_pixel=10, pixel_w=2000,
+    # scale=0.8: threshold_m = 0.2*2000/(10*0.8) = 50 m. Good.
     north_arm = box(-100_000.0, 100_000.0, 100_000.0, 399_200.0)
     ext = unary_union([east_arm, north_arm])
     report = run_all_ocean_checks(
@@ -140,6 +153,11 @@ def test_seam_consistency_multi_neighbour_via_aggregator(
         neighbour_geoms_by_member={
             "A": {"B": island_b, "C": island_c},
         },
+        # Tight threshold (≈50 m of CRS) via synthetic pipeline knobs
+        # so 800 m of drift exceeds it. The check otherwise behaves the
+        # same as in production.
+        xy_mm_per_pixel=10.0,
+        global_xy_scale=0.8,
     )
     # The seam sub-report sits in report.children with kind="ocean_seam".
     seam_kids = [c for c in report.children if c.kind == "ocean_seam"]
@@ -303,7 +321,15 @@ def test_no_slivers_passes_on_multiple_single_polygons():
 
 def test_no_slivers_fires_on_multipolygon():
     """Deliberate fault: a coastline-tracing bug produces a sector with
-    disconnected components (stripes)."""
+    sliver-sized disconnected components (stripes).
+
+    The check used to flag ALL MultiPolygons; it now only flags
+    MultiPolygons containing components below
+    ``OCEAN_SECTOR_MIN_COMPONENT_KM2`` (default 1000 km²), because
+    sub-island decomposition in the bead-04 orchestrator legitimately
+    produces multi-component sectors for archipelago members.
+    """
+    # Two 1×1 unit-m polygons — well below the 1000 km² floor.
     bad_sector = MultiPolygon([
         Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
         Polygon([(10, 10), (11, 10), (11, 11), (10, 11)]),
@@ -311,8 +337,22 @@ def test_no_slivers_fires_on_multipolygon():
     result = extension_no_disconnected_slivers([bad_sector])
     assert not result.passed
     assert result.value["n_bad"] == 1
-    assert result.value["bad"][0]["reason"] == "MultiPolygon"
+    assert result.value["bad"][0]["reason"] == "sliver_components"
     assert result.value["bad"][0]["n_components"] == 2
+
+
+def test_no_slivers_accepts_large_multipolygon():
+    """Multi-component sectors with all components above the
+    sliver threshold pass — that's the bead-04 sub-island case."""
+    # Two 100 km × 100 km polygons (10,000 km² each, well above floor).
+    big_a = box(0, 0, 100_000.0, 100_000.0)
+    big_b = box(500_000.0, 0, 600_000.0, 100_000.0)
+    multi = MultiPolygon([big_a, big_b])
+    result = extension_no_disconnected_slivers([multi])
+    assert result.passed, (
+        f"expected pass on legitimate 2-component sector "
+        f"(both > 1000 km²); got {result.value}"
+    )
 
 
 def test_no_slivers_reports_which_sector_failed():

@@ -1002,6 +1002,9 @@ def run_qc(
     member_geoms_ee: Optional[dict] = None,
     ocean_neighbours_ee: Optional[dict] = None,
     ocean_sector_polys_ee: Optional[dict] = None,
+    pipeline_scale: float = 0.33,
+    pipeline_mm_per_pixel: float = 0.25,
+    pipeline_pixel_w: float = 2000.0,
 ) -> bool:
     """Run per-piece (each member) QC plus visual QC (PNG per member +
     group overview). Write qc.json with metric pointers. Returns True if
@@ -1099,6 +1102,14 @@ def run_qc(
                 sector_polygons_by_member=ocean_sector_polys_ee,
                 neighbour_geoms_by_member=ocean_neighbours_ee,
                 ocean_configs=ocean_configs,
+                # Threshold conversion uses the full pipeline scaling
+                # chain (pixel_w / XY_MM_PER_PIXEL / GLOBAL_XY_SCALE).
+                # Without these the seam-consistency threshold is off
+                # by 3-4 orders of magnitude (Korea_Japan 2026-05-18 run
+                # surfaced this).
+                global_xy_scale=pipeline_scale,
+                xy_mm_per_pixel=pipeline_mm_per_pixel,
+                pixel_w=pipeline_pixel_w,
             )
             report.add_child(ocean_report)
         except Exception as e:
@@ -1433,6 +1444,11 @@ def main():
             member_geoms_ee=ocean_member_geoms_ee or None,
             ocean_neighbours_ee=ocean_neighbours_ee or None,
             ocean_sector_polys_ee=ocean_sector_polys_ee or None,
+            # Pipeline scale knobs for the print-mm <-> CRS-m conversion
+            # in the seam-consistency check.
+            pipeline_scale=pipe.GLOBAL_XY_SCALE,
+            pipeline_mm_per_pixel=pipe.XY_MM_PER_PIXEL,
+            pipeline_pixel_w=float(dem.transform.a),
         )
         if not qc_passed:
             return 1

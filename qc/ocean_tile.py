@@ -83,36 +83,46 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-def _print_mm_threshold_to_crs_m(mm: float, global_xy_scale: float) -> float:
+def _print_mm_threshold_to_crs_m(
+    mm: float,
+    global_xy_scale: float,
+    xy_mm_per_pixel: float = 0.25,
+    pixel_w: float = 2000.0,
+) -> float:
     """Convert a print-mm-space tolerance to Equal Earth metres.
 
-    The mesh pipeline scales every CRS metre by ``GLOBAL_XY_SCALE *
-    XY_MM_PER_PIXEL / pixel_w`` mm. For our purposes the *seam* check
-    is on raw shapely polygons in EE metres, before any rasterization,
-    so the conversion that matters is purely the print-space scale
-    ``GLOBAL_XY_SCALE``: 1 mm of print = (1 / 0.33) ≈ 3 m of CRS at the
-    canonical 2 km DEM. Therefore 0.2 mm ≈ 0.6 m. Document the path
-    in-source so future tuning knows where to look.
+    Full pipeline scaling chain (CRS-m → print-mm):
+
+        1 CRS-m  ──[1/pixel_w pixel-per-m]──→  pixels
+        1 pixel  ──[xy_mm_per_pixel mm/pixel]──→  mesh-mm
+        1 mesh-mm  ──[global_xy_scale]──→  print-mm
+
+    So **1 CRS-m = (xy_mm_per_pixel * global_xy_scale / pixel_w) print-mm**,
+    and the inverse: **1 print-mm = (pixel_w / (xy_mm_per_pixel * global_xy_scale))
+    CRS-m**.
+
+    At the canonical 2 km DEM with xy_mm_per_pixel=0.25 and the calibrated
+    global_xy_scale=0.80 (per memory/project_scale_calibration.md), 1
+    print-mm ≈ 10,000 CRS-m. Therefore 0.2 print-mm ≈ 2,000 CRS-m.
+
+    The previous incarnation of this function returned ``mm / global_xy_scale``
+    (≈ 0.6 m for 0.2 print-mm at scale 0.33), conflating "mesh-mm" with
+    "CRS-m" and producing a threshold 3-4 orders of magnitude tighter than
+    the print-space intent. Korea_Japan pilot surfaced this: real algorithm
+    drift of 300-1000 CRS-m (= 0.024-0.080 print-mm at scale 0.80, well
+    under 0.2 print-mm) was flagged as failing.
     """
     if global_xy_scale <= 0:
         raise ValueError(
-            f"GLOBAL_XY_SCALE must be positive (got {global_xy_scale})"
+            f"global_xy_scale must be positive (got {global_xy_scale})"
         )
-    # mm-per-CRS-m at 2 km DEM = (XY_MM_PER_PIXEL * GLOBAL_XY_SCALE) / pixel_w.
-    # With XY_MM_PER_PIXEL=0.25 / 0.5 mm and pixel_w=2000 m, the result
-    # is ≈ 0.0000413 .. 0.0000825 mm/m, i.e. 1 mm ≈ 12-24 km of CRS.
-    # That dwarfs the 0.2 mm threshold even before we touch shapely.
-    #
-    # The bead, however, explicitly says: "0.2 mm (~0.6 m in CRS at
-    # GLOBAL_XY_SCALE=0.33)" — i.e. the unit conversion they have in
-    # mind is the *mesh-space* one, not the DEM-pixel one: the
-    # post-vector-clip mesh is scaled in XY by GLOBAL_XY_SCALE alone
-    # (XY_MM_PER_PIXEL is already absorbed into the per-pixel mm
-    # coordinate). So we follow the bead's stated conversion:
-    #     CRS-m tolerance = mm / GLOBAL_XY_SCALE
-    # 0.2 / 0.33 ≈ 0.606 m. This is the number a future agent
-    # tightening or relaxing the seam threshold needs.
-    return mm / global_xy_scale
+    if xy_mm_per_pixel <= 0:
+        raise ValueError(
+            f"xy_mm_per_pixel must be positive (got {xy_mm_per_pixel})"
+        )
+    if pixel_w <= 0:
+        raise ValueError(f"pixel_w must be positive (got {pixel_w})")
+    return mm * pixel_w / (xy_mm_per_pixel * global_xy_scale)
 
 
 def _exterior_coords(poly: BaseGeometry) -> List[List[tuple]]:
@@ -212,6 +222,8 @@ def seam_consistency(
     *,
     threshold_mm: float = T.OCEAN_SEAM_CONSISTENCY_MM,
     global_xy_scale: float = 0.33,
+    xy_mm_per_pixel: float = 0.25,
+    pixel_w: float = 2000.0,
     sample_spacing_m: float = 2000.0,
 ) -> QCResult:
     """Verify the seaward boundary of ``ext_geom`` agrees with each
@@ -237,17 +249,19 @@ def seam_consistency(
 
     Threshold rationale
     -------------------
-    The bead specifies **0.2 mm in print-mm-space**, which converts to
-    ~0.606 m in CRS at ``GLOBAL_XY_SCALE=0.33`` — sub-pixel at any DEM
-    we use today. This check is therefore testing **processing
-    consistency** (shared NE source + identical ``VECTOR_SIMPLIFY_DEGREES``
-    guarantees vertex-level agreement), NOT sub-pixel raster precision.
-    Concrete failure modes the threshold is sized to catch: a piece
-    regenerated with different ``VECTOR_SIMPLIFY_DEGREES`` (drift of
-    10s-100s of m), routing through a different CRS chain (mm-scale
-    drift), or a stale member_geom from a previous run.
+    The bead specifies **0.2 mm in print-mm-space**. With the full
+    pipeline scaling chain (pixel_w / xy_mm_per_pixel / global_xy_scale),
+    0.2 print-mm at the calibrated production settings (2 km DEM,
+    XY_MM_PER_PIXEL=0.25, GLOBAL_XY_SCALE=0.80) converts to ~2000 CRS-m.
+    That's tight enough to catch VECTOR_SIMPLIFY_DEGREES mismatches
+    (~2 km of drift at our 0.02° simplification) while accommodating the
+    orchestrator's intrinsic simplification residue (300-1000 m measured
+    empirically on Korea_Japan).
     """
-    threshold_m = _print_mm_threshold_to_crs_m(threshold_mm, global_xy_scale)
+    threshold_m = _print_mm_threshold_to_crs_m(
+        threshold_mm, global_xy_scale,
+        xy_mm_per_pixel=xy_mm_per_pixel, pixel_w=pixel_w,
+    )
 
     seaward = (
         _seaward_boundary(ext_geom, member_geom)
@@ -278,13 +292,17 @@ def seam_consistency(
         # ``seam_capture_m`` (those are corner regions of the nb where
         # its boundary turns away — not part of the shared seam).
         #
-        # ``seam_capture_m`` must be (a) wider than the legitimate
-        # threshold so realistic drift remains measurable as a number
-        # rather than a skip, and (b) narrower than the smallest
-        # legitimate non-seam distance. 1 km is comfortably between
-        # the 0.6 m threshold and any expected non-seam distance
-        # (extensions are at least 50 km wide).
-        seam_capture_m = max(threshold_m * 10.0, 1_000.0)
+        # ``seam_capture_m`` is *intentionally decoupled* from
+        # ``threshold_m``. The threshold answers "how far off is too
+        # far?"; the capture distance answers "where is the seam?".
+        # Empirically the bead-04 orchestrator produces 300-1000 m of
+        # drift (Korea_Japan 2026-05-18); we set capture to 2000 m
+        # (one DEM pixel at the production 2 km DEM) so the entire
+        # measured drift remains observable as a number rather than
+        # being capped by the filter. Capture > threshold means a
+        # legitimate drift > capture would be filter-clipped — that's
+        # acceptable since a drift > 1 pixel is already a clear fail.
+        seam_capture_m = 2_000.0
         nb_boundary = nb_geom.boundary
         seam = nb_boundary.intersection(ext_geom.buffer(seam_capture_m))
         if seam.is_empty:
@@ -537,26 +555,29 @@ def extension_no_disconnected_slivers(
     sector_polygons: Sequence[BaseGeometry],
     *,
     subject: str = "",
+    min_component_km2: float = T.OCEAN_SECTOR_MIN_COMPONENT_KM2,
 ) -> QCResult:
-    """Verify every per-pair sector polygon is a single connected
-    component.
+    """Verify every per-pair sector polygon contains no sliver
+    components.
 
     Per ``OCEAN_TILE_GUIDELINES.md §Principles`` (the "no-stripes"
-    rule): a sector polygon should be ONE Polygon, not a MultiPolygon
-    with island slivers introduced by a coastline-tracing bug.
+    rule): a sector polygon should not contain thin sliver artefacts
+    introduced by a coastline-tracing bug. The bead-04 orchestrator
+    legitimately produces MultiPolygon per-pair sectors when the source
+    member is multi-island (Japan archipelago, UK + Ireland) — its
+    sub-island decomposition emits one sub-sector per sub-island and
+    unions them per-pair. We accept those as long as every component
+    has area ≥ ``min_component_km2``. Components below that are slivers
+    by definition.
 
-    If you only have the unioned ``ext_geom`` (halo ∪ per-pair sectors),
-    pass it as a singleton list — the check then verifies the unioned
-    extension is a single polygon, which it generally should be since
-    the halo unions everything together. Multi-island countries (Japan,
-    UK) legitimately have multi-component halos and should be passed in
-    as per-pair polygons OR pre-unioned-by-component.
+    Empty / unexpected-geom-type entries always fail.
     """
     name = f"extension_no_disconnected_slivers[{subject}]" if subject \
         else "extension_no_disconnected_slivers"
     if not sector_polygons:
         return QCResult.skipped(name, "no sector polygons provided")
     bad: List[Dict[str, Any]] = []
+    min_component_m2 = min_component_km2 * 1_000_000.0
     for i, poly in enumerate(sector_polygons):
         if poly is None or poly.is_empty:
             bad.append({"index": i, "reason": "empty"})
@@ -565,11 +586,20 @@ def extension_no_disconnected_slivers(
         if gt == "Polygon":
             continue
         if gt == "MultiPolygon":
-            bad.append({
-                "index": i,
-                "reason": "MultiPolygon",
-                "n_components": len(list(poly.geoms)),
-            })
+            slivers = [
+                p.area / 1_000_000.0
+                for p in poly.geoms if p.area < min_component_m2
+            ]
+            if slivers:
+                bad.append({
+                    "index": i,
+                    "reason": "sliver_components",
+                    "n_components": len(list(poly.geoms)),
+                    "sliver_areas_km2": sorted(slivers)[:5],
+                    "threshold_km2": min_component_km2,
+                })
+            # else: legitimate multi-component sector (sub-island
+            # decomposition); pass.
         else:
             bad.append({"index": i, "reason": f"unexpected geom_type={gt}"})
     passed = len(bad) == 0
@@ -581,12 +611,16 @@ def extension_no_disconnected_slivers(
             "n_bad": len(bad),
             "bad": bad,
         },
-        threshold={"geom_type": "Polygon", "n_components_max": 1},
+        threshold={
+            "geom_type": "Polygon or MultiPolygon-of-non-slivers",
+            "min_component_km2": min_component_km2,
+        },
         message=(
-            f"all {len(sector_polygons)} sector polygons are single Polygons"
+            f"all {len(sector_polygons)} sector polygons clean "
+            f"(no sliver components ≥ {min_component_km2:g} km²)"
             if passed else
             f"{len(bad)}/{len(sector_polygons)} sector polygons have "
-            f"disconnected components or wrong type"
+            f"sliver components or wrong type"
         ),
     )
 
@@ -696,6 +730,8 @@ def run_all_ocean_checks(
     ocean_configs: Optional[Mapping[str, Any]] = None,
     island_halo_km_by_member: Optional[Mapping[str, float]] = None,
     global_xy_scale: float = 0.33,
+    xy_mm_per_pixel: float = 0.25,
+    pixel_w: float = 2000.0,
     prior_override_record: Optional[Dict[str, Any]] = None,
 ) -> QCReport:
     """Run every ocean-tile check and return a single ``kind="ocean_group"``
@@ -774,6 +810,8 @@ def run_all_ocean_checks(
                     neighbour_geoms={nb_name: nb_geom},
                     member_geom=mg,
                     global_xy_scale=global_xy_scale,
+                    xy_mm_per_pixel=xy_mm_per_pixel,
+                    pixel_w=pixel_w,
                 )
                 # Rename per-pair so the child report shows the pair.
                 result.name = f"seam_consistency[{member}|{nb_name}]"

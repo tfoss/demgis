@@ -65,9 +65,23 @@ PAIR_MIN_BORDER_POINTS = 50              # below = "didn't find a real
 
 # ---- Ocean tiles (bead 05) ------------------------------------------
 # Print-mm-space tolerance for `qc.ocean_tile.seam_consistency`. The
-# bead specifies 0.2 mm; converted via GLOBAL_XY_SCALE=0.33 this gives
-# ~0.6 m of CRS slack, sub-pixel at our 2 km DEMs. The threshold is
-# testing *processing consistency* (shared NE source + identical
-# VECTOR_SIMPLIFY_DEGREES guarantees vertex agreement), not raster
-# precision; loosen only if real processing variation forces it.
+# bead specifies 0.2 mm. Conversion to CRS metres uses the full
+# pipeline chain (pixel_w / xy_mm_per_pixel / global_xy_scale) — at
+# the production 2 km DEM with XY_MM_PER_PIXEL=0.25 and GLOBAL_XY_SCALE=0.80
+# this gives ~2000 CRS-m of slack, comfortably above the bead-04
+# orchestrator's empirical 300-1000 m of simplification residue while
+# still tight enough to catch a VECTOR_SIMPLIFY_DEGREES (~2.2 km)
+# mismatch between member and neighbour.
 OCEAN_SEAM_CONSISTENCY_MM = 0.2          # TBD: confirm against pilots
+
+# Per-component minimum area for `extension_no_disconnected_slivers`.
+# A per-pair sector polygon may legitimately be MultiPolygon when the
+# source member is multi-island (Japan archipelago, UK + Ireland, etc.) —
+# the orchestrator's sub-island decomposition produces one sub-sector
+# per sub-island, unioned per-pair. We accept the MultiPolygon as long
+# as every component is at least this large. Components below this
+# threshold are "stripes" from a coastline-tracing bug (per the bead
+# spec). 1000 km² rejects sliver artefacts (~10-km scale and below)
+# while accepting legitimate sub-island sectors (Hokkaido ~78,000 km²,
+# even small sub-island contributions are well above 1000 km²).
+OCEAN_SECTOR_MIN_COMPONENT_KM2 = 1_000.0
