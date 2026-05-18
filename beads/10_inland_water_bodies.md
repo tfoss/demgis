@@ -12,6 +12,36 @@
 
 Real Cat 2B work still ahead: introduce a water-body member type (or repurpose `CountryGroup` with a lake polygon as the "country"); wire up `seam_consistency` between water-body and bordering country tiles (consumer side of the bead-05 QC report dict landed in `f5bc8ed`); decide on NE sources for Caspian / Black Sea (likely `ne_10m_geography_marine_polys.shp`, which isn't in `data/ne/` yet — needs download).
 
+**Cat 2B feasibility — confirmed (2026-05-18).** PoC at `tmp/cat2b_poc.py` clips `ne_110m_lakes` Lake Victoria polygon against `world_2km_eqearth.tif`, gets 15,511 valid pixels with elevation 1133-1725 m (the 1133 m matches Lake Victoria's true surface elevation; the 1725 m bleed at the edge is DEM-pixel-stretch where the lake polygon crosses non-water DEM cells). The trimesh pixel-box mesh primitive works. The full Cat 2B implementation is genuinely multi-day work:
+
+1. **Schema** (small, ~1 hour). Add `WaterBody` dataclass to `groups.py`:
+   ```python
+   @dataclass
+   class WaterBody:
+       name: str               # "Lake Victoria"
+       source_layer: str       # "ne_110m_lakes" / "ne_10m_lakes" / "ne_10m_geography_marine_polys"
+       source_name_field: str  # "name" or "name_en"
+       source_name_value: str  # "Lake Victoria" or "Caspian Sea"
+       surface_elev_m: float   # canonical surface elevation, e.g. 1133 for Victoria
+   ```
+   Extend `CountryGroup.members` to accept `Union[str, WaterBody]` (or sibling field `water_body_members: list[WaterBody]`).
+
+2. **Driver** (medium, ~2-3 hours). Modify `load_member_geom_wgs84` to load lake polygons from the configured NE layer instead of `ne_10m_admin_0_countries`. Modify `pipe.process_country` (or its caller) to:
+   - Clip DEM to lake polygon (already works)
+   - Force all DEM pixels to `surface_elev_m` (so the print is truly flat, not stretched at the polygon edge)
+   - Use the lake polygon for vector-clip (already works)
+   - Suppress capital-star + back-label paths (lakes don't have capitals or names rendered the same way; or have a different label scheme)
+
+3. **NE data** (small-ish, 30 min + download bandwidth). Pull `ne_10m_lakes.shp` (~2 MB) and `ne_10m_geography_marine_polys.shp` (~5-10 MB) from Natural Earth's 10m physical vectors. Build the per-body-source map (`{ "Caspian Sea": "geography_marine_polys", "Lake Superior": "lakes_10m", ... }`).
+
+4. **Bordering-country clip** (medium, ~2 hours). For each Cat 2B body, the bordering countries must end at the natural NE shoreline. Today USA's STL absorbs Lake Erie entirely. The fix: for each bordering country in a group containing a Cat 2B water body, subtract the lake polygon from the country polygon before vector-clipping the mesh. This needs a new field on `CountryGroup` to declare "this group's countries are bordered by water body X" so the driver knows what to subtract.
+
+5. **bead-05 QC wiring** (small, ~1 hour). Add `seam_consistency` between water-body shoreline and bordering country shorelines. The bead-05 helpers are reusable; just need to pass the right inputs (water body polygon as "extension", bordering country polygons as "neighbours").
+
+6. **Pilot configs** (small per body, ~30 min each). `LAKE_VICTORIA`, `GREAT_LAKES_SUPERIOR/HURON/MICHIGAN/ERIE/ONTARIO`, `LAKE_TANGANYIKA`, `LAKE_MALAWI`, `CASPIAN_SEA`, `BLACK_SEA`. Each needs the bordering-country list + the water-body source + the surface elevation.
+
+7. **Total estimate**: 1-2 days of focused work + 1 day of pilot tuning. Probably best as a follow-up "Bead 15" sub-bead, scoped to start with Lake Victoria (single body, fewest dependencies, no NE download).
+
 ## Context
 
 The §5 ocean-tile work (beads 01–09) treats the world ocean as a single conceptual surface and uses a -200m DEM mark + 1.5mm vertex-lowering + buffer halo as a paint-receiving apron around coastal tiles. Inland water bodies don't share that conceptual frame: each sits at its own true elevation (Titicaca +3812m, Baikal +456m, Caspian −28m, Dead Sea −430m, Great Lakes ~+175m), and forcing them to "sea level −200m" would print a Soviet-grade altimetry lie. Copernicus GLO-30 already does the right thing here — radar reflects off the water surface, so each lake comes out of the DEM as a flat patch at its true surface elevation. The work is mostly classification + a small polygon-hole-fill, not a new mesh path.
