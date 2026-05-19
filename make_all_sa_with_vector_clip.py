@@ -1252,16 +1252,29 @@ def process_country(
 
     # Lower bridge vertices from BASE_THICKNESS_MM (~2.0mm) to bridge_height_mm.
     # Bridge zones were marked at -200m pre-smooth, so they came out at
-    # BASE_THICKNESS_MM after solidify. Selecting vertices in the bridge bbox
-    # at z ≈ BASE_THICKNESS_MM and pulling them down creates a visible-but-low
+    # BASE_THICKNESS_MM after solidify. Selecting vertices in the bridge
+    # polygon (NOT bbox — the bbox of a complex ocean-extension polygon
+    # like Sri Lanka's includes huge swathes of the country's land) at
+    # z ≈ BASE_THICKNESS_MM and pulling them down creates a visible-but-low
     # bridge (paintable as ocean). Pattern from generate_denmark_connected.py.
+    #
+    # Bbox bug history (2026-05-19): the original implementation used
+    # `bp.bounds` as the in-region mask, which works for Denmark's small
+    # rectangular Belts (polygon ≈ bbox) but fails for bead-04 ocean
+    # extensions (Sri Lanka's 285,000 km² ocean polygon's bbox includes
+    # the northern half of Sri Lanka). The fix: pre-filter by bbox for
+    # speed, then exact polygon-containment on the filtered vertices.
     if bridge_polys_crs:
+        from rasterio.transform import xy as transform_xy
         from rasterio.transform import rowcol
+        from shapely.geometry import Point
+        from shapely.prepared import prep
         print(f"  Lowering bridge vertices to {bridge_height_mm}mm...")
         vertices = solid.vertices.copy()
         total_lowered = 0
         z_band = (BASE_THICKNESS_MM - 0.2, BASE_THICKNESS_MM + 0.2)
         for bp in bridge_polys_crs:
+            # Bbox pre-filter in mesh-mm — same conversion as before, cheap.
             minx, miny, maxx, maxy = bp.bounds
             row_min, col_min = rowcol(transform, minx, maxy)
             row_max, col_max = rowcol(transform, maxx, miny)
@@ -1269,13 +1282,38 @@ def process_country(
             x_max = (col_max + 1) * XY_MM_PER_PIXEL
             y_min = row_min * XY_MM_PER_PIXEL
             y_max = (row_max + 1) * XY_MM_PER_PIXEL
-            in_bridge = (
+            bbox_mask = (
                 (vertices[:, 0] >= x_min) & (vertices[:, 0] <= x_max) &
                 (vertices[:, 1] >= y_min) & (vertices[:, 1] <= y_max) &
                 (vertices[:, 2] >= z_band[0]) & (vertices[:, 2] <= z_band[1])
             )
-            vertices[in_bridge, 2] = bridge_height_mm
-            total_lowered += int(in_bridge.sum())
+            cand_idx = np.where(bbox_mask)[0]
+            if len(cand_idx) == 0:
+                continue
+            # Exact polygon containment on bbox-filtered vertices. Convert
+            # each candidate's mesh-mm → CRS coords, point-in-polygon. Use
+            # shapely's prepared geometry for fast queries.
+            prepared = prep(bp)
+            cols = vertices[cand_idx, 0] / XY_MM_PER_PIXEL
+            rows = vertices[cand_idx, 1] / XY_MM_PER_PIXEL
+            # transform.xy works pixel-wise; do a vectorised conversion.
+            # rasterio.transform.xy returns CRS centre of each pixel;
+            # since we have fractional row/col we apply the affine directly.
+            crs_x = transform.c + cols * transform.a + rows * transform.b
+            crs_y = transform.f + cols * transform.d + rows * transform.e
+            # Use intersects (boundary-inclusive) rather than contains
+            # (strict interior) — Denmark's narrow rectangular bridges
+            # produce many vertices right at the polygon edge; strict
+            # containment loses 90% of them. Bead-04 ocean polygons are
+            # large enough that boundary vs strict containment barely
+            # matters in volume terms.
+            inside = np.array([
+                prepared.intersects(Point(crs_x[i], crs_y[i]))
+                for i in range(len(cand_idx))
+            ], dtype=bool)
+            lower_idx = cand_idx[inside]
+            vertices[lower_idx, 2] = bridge_height_mm
+            total_lowered += int(inside.sum())
         solid.vertices = vertices
         print(f"    Lowered {total_lowered} vertices")
 

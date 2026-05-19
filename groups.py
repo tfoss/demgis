@@ -354,21 +354,26 @@ SRI_LANKA = CountryGroup(
     # Bead 07 pilot — single island↔continental pair. SL owns the
     # Palk Strait + Gulf of Mannar sector toward India per the
     # ownership rule. auto_discover_neighbors lets the orchestrator
-    # find India on its own (and only India: the Maldives are well
-    # below min_neighbor_area_km2, and there's no land within
-    # max_distance_km in any other direction). No archipelago halo
-    # — SL is one main island; the Jaffna offshore islets are too
-    # small to matter visually at print scale.
+    # find India on its own; max_distance_km=200 keeps the sector
+    # polygon from extending 1000 km up into Tamil Nadu / Andhra
+    # Pradesh — Sri Lanka's only meaningful ocean neighbour is just
+    # across the ~30 km Palk Strait. The default 1000 km produced a
+    # 148 mm tall STL vs ~36 mm for Sri Lanka itself.
     ocean_extensions={
         "Sri Lanka": [
-            OceanExtension(auto_discover_neighbors=True),
+            OceanExtension(
+                auto_discover_neighbors=True,
+                max_distance_km=200.0,
+            ),
         ],
     },
     notes="Bead 07 pilot: single-pair clean validation. SL↔India "
           "ownership pair (island↔continental → SL owns). The Palk "
           "Strait sector exercises multi-part decomposition (India's "
           "full hull engulfs Adam's Bridge area, so the algorithm "
-          "must work on each country's largest sub-polygon).",
+          "must work on each country's largest sub-polygon). "
+          "max_distance_km=200 keeps the extension geographically "
+          "meaningful — just across the strait, not 1000 km inland.",
 )
 
 
