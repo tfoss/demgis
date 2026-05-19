@@ -1162,6 +1162,12 @@ def main():
                     help="Gate on mesh.is_volume (otherwise advisory).")
     ap.add_argument("--no-qc", action="store_true",
                     help="Skip QC entirely (faster smoke tests).")
+    ap.add_argument("--no-3mf", action="store_true",
+                    help="Skip Bambu 3MF wrap of each STL (default: wrap "
+                         "every sub-piece using country_ocean bands for "
+                         "members with ocean_extensions, country bands "
+                         "otherwise). 3MF wrap adds 20-60s per piece for "
+                         "Japan-sized meshes.")
     ap.add_argument("--bed-mm", type=float, default=csplit.DEFAULT_BED_MM,
                     help="Printer bed size in mm. Bead-12 splitting target.")
     ap.add_argument("--prime-tower-mm", type=float,
@@ -1394,6 +1400,37 @@ def main():
                 pipe.CAPITALS.pop(member, None)
             else:
                 pipe.CAPITALS[member] = saved
+
+    # 4b. Bambu 3MF wrap per sub-piece. Each STL gets a sibling .3mf
+    #     with per-triangle filament assignments encoded via Bambu's
+    #     ``paint_color`` attribute. Tile-type rule:
+    #     * member has ``ocean_extensions`` → ``country_ocean`` (ocean
+    #       band at z ≤ 1.98 plus the 7 country bands).
+    #     * otherwise → ``country`` (the 7 country bands).
+    #     Future Cat 2B water-body members will pick ``ocean``.
+    if not args.no_3mf:
+        from paint_elevation_3mf import paint_and_save
+        print(f"\nWrapping pieces as Bambu 3MF...")
+        for member, pieces in split_pieces_by_member.items():
+            tile_type = ("country_ocean"
+                         if group.ocean_extensions.get(member)
+                         else "country")
+            for piece in pieces:
+                stl_path = piece["stl"]
+                if not os.path.exists(stl_path):
+                    print(f"  WARNING: 3MF skipped — STL missing: {stl_path}")
+                    continue
+                out_3mf = stl_path[:-4] + ".3mf"
+                try:
+                    stats = paint_and_save(
+                        stl_path, out_3mf, tile_type=tile_type,
+                    )
+                    n_faces = stats.get("n_faces", 0)
+                    print(f"  wrote {os.path.basename(out_3mf)} "
+                          f"({tile_type}, {n_faces} faces)")
+                except Exception as e:
+                    print(f"  WARNING: 3MF wrap failed for "
+                          f"{os.path.basename(stl_path)}: {e}")
 
     # 5. Alignment JSON
     print(f"\nBuilding alignment.json...")
