@@ -1361,12 +1361,21 @@ def process_country(
                                    yfact=GLOBAL_XY_SCALE, origin=(0, 0))
         if MIRROR_X:
             _poly_post = _affscale(_poly_post, xfact=-1, yfact=1, origin=(0, 0))
-            # Match the mesh's shift-to-zero (see block below).
+            # X-translate to match the mesh's stl_x_min = 0 shift.
             _poly_post = _afftrans(
                 _poly_post,
                 xoff=float(_premirror_bounds_mm[1, 0]) * GLOBAL_XY_SCALE,
                 yoff=0.0,
             )
+        # Y-translate to match the mesh's stl_y_min = 0 shift (mirrors the
+        # `v[:, 1] -= v[:, 1].min()` in the post-mirror block). Use the
+        # pre-mirror, pre-scale Y minimum as the source; the polygon and
+        # the mesh have the same Y extent at this point.
+        _poly_post = _afftrans(
+            _poly_post,
+            xoff=0.0,
+            yoff=-float(_premirror_bounds_mm[0, 1]) * GLOBAL_XY_SCALE,
+        )
         _footprint_path = os.path.join(
             output_dir,
             f"{country_name.replace(' ', '_')}_footprint_mm.geojson",
@@ -1384,6 +1393,19 @@ def process_country(
         solid.apply_scale([-1.0, 1.0, 1.0])
         v = solid.vertices
         v[:, 0] -= v[:, 0].min()
+        solid.vertices = v
+
+    # Re-zero Y so stl_y_min = 0 (mirrors what the MIRROR_X block does for
+    # X). Without this, smoothing erosion at the polygon's top edge leaves
+    # stl_y starting at a non-zero value (4.80 mm for Sri Lanka with
+    # MASK_SMOOTH_SIGMA_PIX=10), and the QC back-projection in
+    # qc.per_piece.stl_to_crs (which assumes stl_y=0 corresponds to
+    # mesh_bbox_crs.maxy) renders the STL ~48 km south of where it
+    # actually sits in CRS.
+    v = solid.vertices
+    y_shift = v[:, 1].min()
+    if abs(y_shift) > 1e-9:
+        v[:, 1] -= y_shift
         solid.vertices = v
 
     # Final manifold_clean BEFORE export. The earlier clean inside

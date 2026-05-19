@@ -359,11 +359,22 @@ SRI_LANKA = CountryGroup(
     # Pradesh — Sri Lanka's only meaningful ocean neighbour is just
     # across the ~30 km Palk Strait. The default 1000 km produced a
     # 148 mm tall STL vs ~36 mm for Sri Lanka itself.
+    #
+    # island_halo_km=25 protects SL's open-ocean coasts (east toward
+    # Bay of Bengal, south toward open Indian Ocean) from the
+    # MASK_SMOOTH_SIGMA_PIX=10 Gaussian erosion in process_country.
+    # Without a halo, the smoothing eats ~20 km of coast wherever
+    # there's no ocean extension to provide natural padding —
+    # visible as a 0.18° wide "missing land" strip along the east
+    # coast in the QC overlay. The halo renders as bridge-lowered
+    # ocean slab (z = 1.5 mm) around the country, exactly matching
+    # the Palk Strait extension's appearance.
     ocean_extensions={
         "Sri Lanka": [
             OceanExtension(
                 auto_discover_neighbors=True,
                 max_distance_km=200.0,
+                island_halo_km=25.0,
             ),
         ],
     },
@@ -373,7 +384,9 @@ SRI_LANKA = CountryGroup(
           "full hull engulfs Adam's Bridge area, so the algorithm "
           "must work on each country's largest sub-polygon). "
           "max_distance_km=200 keeps the extension geographically "
-          "meaningful — just across the strait, not 1000 km inland.",
+          "meaningful — just across the strait, not 1000 km inland. "
+          "island_halo_km=25 protects open-ocean coasts from "
+          "smoothing erosion.",
 )
 
 
