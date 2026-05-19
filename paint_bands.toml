@@ -1,0 +1,173 @@
+# paint_bands.toml — elevation band → filament slot mapping consumed by
+# paint_elevation_3mf.py. Edit this file to change thresholds, slot
+# assignments, or display colours without touching code.
+#
+# Coordinates
+# -----------
+# `z_max` is mesh-mm. The country STL has its base bottom at z = 0 and a
+# 2 mm flat base; topography rises above the base via:
+#
+#     z_mm = BASE_THICKNESS_MM + Z_SCALE_MM_PER_M * elevation_m
+#          = 2.0 + 0.0020 * elevation_m
+#
+# So 5 k ft ≈ 1 524 m → z = 5.048 mm; 8 k → 6.876; 11 k → 8.706;
+#    14 k → 10.534; 17 k → 12.362; 20 k → 14.192.
+#
+# Slots
+# -----
+# `slot` is the 1-based Bambu filament index (matches the AMS palette
+# slot in the slicer UI). Slot 1 is the default extruder and is written
+# without any `paint_color` attribute. Slot 4 is reserved for ocean
+# blue across both country and ocean tile types.
+#
+# Bands are evaluated in order: a triangle's centroid Z falls into the
+# first band whose `z_max` it is ≤. Use `inf` for the last band. After
+# mesh pre-subdivision at every z_max boundary, no triangle straddles a
+# band, so painted regions have clean horizontal cuts.
+#
+# `color` is documentation only — Bambu reads filament colours from the
+# AMS palette in the slicer, not from this file.
+
+# Drop output bands with fewer than this many triangles (slice-plane
+# capping artefacts near the mesh edge). 0 = keep all.
+min_band_faces = 0
+
+# ---------------------------------------------------------------------------
+# Country tiles — 7 elevation bands.
+#
+# Visual progression: country/lowland green → tan → brown (vegetation →
+# bare ground → exposed rock) → grey (alpine rock) → white (snow line) →
+# lavender → purple (icefall / alpenglow / peaks).
+#
+# Slot 4 is deliberately skipped — it's reserved for ocean blue so a
+# country tile and an adjacent ocean tile share their filament-4 slot.
+# ---------------------------------------------------------------------------
+
+[[country]]
+z_max = 5.048      # ≤ 5 k ft (lowland; default extruder, no paint attr)
+slot  = 1
+color = "#388E3C"
+label = "lowland_green"
+
+[[country]]
+z_max = 6.876      # 5–8 k ft (foothills, dry slopes)
+slot  = 2
+color = "#A1887F"
+label = "alt_5_8k_tan"
+
+[[country]]
+z_max = 8.706      # 8–11 k ft (rocky mid-mountain)
+slot  = 3
+color = "#6D4C41"
+label = "alt_8_11k_brown"
+
+[[country]]
+z_max = 10.534     # 11–14 k ft (alpine rock, high plateau onset)
+slot  = 5
+color = "#9E9E9E"
+label = "alt_11_14k_grey"
+
+[[country]]
+z_max = 12.362     # 14–17 k ft (snow line, Altiplano / Tibet bulk)
+slot  = 6
+color = "#FAFAFA"
+label = "alt_14_17k_white"
+
+[[country]]
+z_max = 14.192     # 17–20 k ft (extreme high mountains)
+slot  = 7
+color = "#B39DDB"
+label = "alt_17_20k_lavender"
+
+[[country]]
+z_max = inf        # > 20 k ft (peaks only — Andes + High Asia + Denali cap)
+slot  = 8
+color = "#6A1B9A"
+label = "alt_above_20k_purple"
+
+# ---------------------------------------------------------------------------
+# Ocean tiles — z ≤ 1.98 mm in slot 4 (water); anything above inherits
+# slot 1 so coastal stubs match an adjacent country's lowland.
+# ---------------------------------------------------------------------------
+
+[[ocean]]
+z_max = 1.98
+slot  = 4
+color = "#1976D2"
+label = "ocean_blue"
+
+[[ocean]]
+z_max = inf
+slot  = 1
+color = "#388E3C"
+label = "ocean_coastal_green"
+
+# ---------------------------------------------------------------------------
+# Country tiles WITH bead-04 ocean extension — country + ocean combined.
+#
+# Used for Cuba_Caribbean, Korea_Japan, Sri_Lanka, UK_Ireland, and any
+# future group whose member has an OceanExtension. The ocean-extension
+# region is bridge-vertex-lowered to z = 1.5 mm (below the 2 mm base),
+# so the centroid-z classifier picks up its top surface in the first
+# band and paints it the shared ocean blue (slot 4). The remaining
+# bands match [[country]] exactly so terrain renders identically.
+#
+# Caveat: side walls and the base bottom of the land area also have
+# centroid z ≤ 1.98 and will paint blue. From the top viewing angle
+# this is invisible (terrain top + ocean top are correctly coloured);
+# from the side the land's coastal walls show a blue stripe at the
+# base. A normal-aware classifier would distinguish top from side
+# triangles and fix this; deferred as a follow-up to paint_elevation_3mf.py.
+#
+# Tiles WITHOUT ocean extension should keep using --type country.
+# Don't use country_ocean for pure-land tiles — it would paint their
+# base bottom and side walls blue without any matching ocean top.
+# ---------------------------------------------------------------------------
+
+[[country_ocean]]
+z_max = 1.98       # ocean extension region (bridge-lowered to z = 1.5 mm)
+slot  = 4
+color = "#1976D2"
+label = "ocean_blue"
+
+[[country_ocean]]
+z_max = 5.048      # ≤ 5 k ft (lowland)
+slot  = 1
+color = "#388E3C"
+label = "lowland_green"
+
+[[country_ocean]]
+z_max = 6.876      # 5–8 k ft (foothills, dry slopes)
+slot  = 2
+color = "#A1887F"
+label = "alt_5_8k_tan"
+
+[[country_ocean]]
+z_max = 8.706      # 8–11 k ft (rocky mid-mountain)
+slot  = 3
+color = "#6D4C41"
+label = "alt_8_11k_brown"
+
+[[country_ocean]]
+z_max = 10.534     # 11–14 k ft (alpine rock, high plateau onset)
+slot  = 5
+color = "#9E9E9E"
+label = "alt_11_14k_grey"
+
+[[country_ocean]]
+z_max = 12.362     # 14–17 k ft (snow line)
+slot  = 6
+color = "#FAFAFA"
+label = "alt_14_17k_white"
+
+[[country_ocean]]
+z_max = 14.192     # 17–20 k ft (extreme high mountains)
+slot  = 7
+color = "#B39DDB"
+label = "alt_17_20k_lavender"
+
+[[country_ocean]]
+z_max = inf        # > 20 k ft (peaks only)
+slot  = 8
+color = "#6A1B9A"
+label = "alt_above_20k_purple"
