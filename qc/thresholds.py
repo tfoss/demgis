@@ -52,6 +52,19 @@ CAPITAL_STAR_OFFSET_MAX_MM = 5.0         # TBD: confirm against baseline
 # differences will exceed 5% honestly.
 COVERAGE_SYMMETRIC_DIFF_FRAC_MAX = 0.05  # TBD: confirm against baseline
 
+# Per-piece: land-only missing+extra vs NE polygon. Differs from
+# coverage_vs_polygon in that it slices the STL above the bridge-
+# lowered ocean band (z=1.99 mm > 1.5 mm ocean slab top), so it only
+# captures the country LAND portion of the mesh — ignores any ocean
+# halo / extension. The intended user-facing alignment metric.
+# Empirical baseline across pilots: land-only members 12-30%
+# (Tajikistan 12%, France 20%, Haiti 65% — Haiti is the outlier);
+# ocean-extended members similar 12-30% once the halo is excluded.
+# Set 50% so Haiti's current value (the worst observed) fails-gates,
+# tighten once we improve simplification + smoothing on small
+# countries.
+LAND_MISSING_OR_EXTRA_FRAC_MAX = 0.50    # TBD: tighten as alignment improves
+
 # ---- Pairwise: border gap (WGS84 + km) ------------------------------
 # These match the units in seasia_eurasia_alignment.json.  The
 # existing best-fit pairs (e.g. Malaysia_peninsula vs Thailand)

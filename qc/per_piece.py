@@ -625,6 +625,91 @@ def _load_country_polygon_wgs84(country: str, ne_path: str):
     return geom
 
 
+def check_land_missing_or_extra(
+    stl_path: str,
+    country: Optional[str],
+    piece_tf: Optional[PieceTransform],
+    dem_crs: Optional[str],
+    ne_path: Optional[str],
+) -> QCResult:
+    """Compare the STL's LAND-only footprint (above the bridge-lowered
+    ocean band) against the Natural Earth country polygon.
+
+    Differs from :func:`check_coverage_vs_polygon` in that the cross-
+    section is taken at z=1.99 mm — above the z=1.5 mm bridge-lowered
+    ocean slab top, below the z=2.0 mm base top of the land prism. The
+    resulting footprint therefore captures only the LAND portion of
+    the mesh, ignoring any ocean halo or bead-04 extension area. This
+    is the user-facing alignment metric: "what fraction of NE land is
+    missing or extra in the STL's land surface?".
+
+    Returns missing_frac, extra_frac, and sym_diff_frac as separate
+    sub-values so the source of mismatch is observable (a country
+    over-eroded by smoothing shows high missing_frac; one whose vector
+    simplification bulges out shows high extra_frac).
+
+    Skipped if any of (country, piece_tf, dem_crs, ne_path) is missing.
+    """
+    if country is None or piece_tf is None or dem_crs is None or ne_path is None:
+        return QCResult.skipped("land_missing_or_extra",
+                                "missing country / piece metadata / NE path")
+    try:
+        country_poly = _load_country_polygon_wgs84(country, ne_path)
+        if country_poly is None:
+            return QCResult.skipped("land_missing_or_extra",
+                                    f"no NE polygon for {country!r}")
+
+        # Cross-section at z=1.99 mm — above the bridge-lowered ocean
+        # slab (z=1.5), at/below the base top (z=2.0). For meshes with
+        # no ocean lowering this gives the full base footprint same as
+        # z=0.5; for ocean-extended meshes it excludes the ocean part.
+        fp = stl_footprint_wgs84(stl_path, piece_tf, dem_crs, z_height=1.99)
+        if fp is None or fp.is_empty:
+            return QCResult(
+                name="land_missing_or_extra",
+                passed=False,
+                value=None,
+                threshold={"frac_max": T.LAND_MISSING_OR_EXTRA_FRAC_MAX},
+                message="STL produced no land-only WGS84 footprint at z=1.99",
+            )
+
+        fp_clean = fp.buffer(0)
+        country_clean = country_poly.buffer(0)
+        missing_area = country_clean.difference(fp_clean).area
+        extra_area = fp_clean.difference(country_clean).area
+        country_area = country_clean.area
+        if country_area <= 0:
+            return QCResult.skipped(
+                "land_missing_or_extra",
+                f"degenerate country polygon for {country!r}",
+            )
+        missing_frac = float(missing_area / country_area)
+        extra_frac = float(extra_area / country_area)
+        sym_diff_frac = missing_frac + extra_frac
+        passed = sym_diff_frac <= T.LAND_MISSING_OR_EXTRA_FRAC_MAX
+
+        return QCResult(
+            name="land_missing_or_extra",
+            passed=passed,
+            value={
+                "missing_frac": missing_frac,
+                "extra_frac": extra_frac,
+                "sym_diff_frac": sym_diff_frac,
+                "country_area_deg2": float(country_area),
+            },
+            threshold={"frac_max": T.LAND_MISSING_OR_EXTRA_FRAC_MAX},
+            message=(
+                f"land sym-diff {sym_diff_frac:.1%} "
+                f"(missing {missing_frac:.1%}, extra {extra_frac:.1%}) "
+                + ("OK" if passed else
+                   f"> {T.LAND_MISSING_OR_EXTRA_FRAC_MAX:.1%}")
+            ),
+        )
+    except Exception as e:
+        return QCResult.error_result("land_missing_or_extra", e,
+                                     "land coverage check raised")
+
+
 def check_coverage_vs_polygon(
     stl_path: str,
     country: Optional[str],
@@ -748,9 +833,15 @@ def run_all_per_piece_checks(
     report.add(check_capital_star_present(mesh, country))
     report.add(check_capital_star_in_polygon(mesh, country, piece_tf, dem_crs))
 
-    # Coverage vs polygon
+    # Coverage vs polygon (full footprint incl. ocean halo — advisory)
     report.add(check_coverage_vs_polygon(stl_path, country, piece_tf,
                                          dem_crs, ne_path))
+
+    # Land-only sym-diff vs polygon (alignment metric the user actually
+    # cares about — excludes bead-04 ocean extension by slicing above
+    # the bridge-lowered z=1.5 mm slab).
+    report.add(check_land_missing_or_extra(stl_path, country, piece_tf,
+                                           dem_crs, ne_path))
 
     # Apply advisory flags (some checks are reported but don't gate)
     for r in report.checks:
