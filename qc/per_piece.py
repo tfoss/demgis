@@ -648,11 +648,30 @@ def check_land_missing_or_extra(
     over-eroded by smoothing shows high missing_frac; one whose vector
     simplification bulges out shows high extra_frac).
 
-    Skipped if any of (country, piece_tf, dem_crs, ne_path) is missing.
+    Skipped if any of (country, piece_tf, dem_crs, ne_path) is missing,
+    or if the STL is a bead-12 sub-piece (dovetail split or component
+    split) — those contain only part of the country and can't be
+    compared against the whole NE polygon. Sub-pieces are detected by
+    the STL filename having extra ``_<region>`` suffixes beyond the
+    bare ``{Country}_solid.stl`` / ``{Country}_starup.stl`` pattern.
     """
     if country is None or piece_tf is None or dem_crs is None or ne_path is None:
         return QCResult.skipped("land_missing_or_extra",
                                 "missing country / piece metadata / NE path")
+    # Skip bead-12 sub-pieces — compared against the whole country
+    # polygon they always look "100% missing" for the parts not in this
+    # sub-piece. Whole-piece STLs are named {Country}_solid.stl or
+    # {Country}_starup.stl; sub-pieces add extra suffixes
+    # (e.g. Japan_south_south.stl).
+    basename = os.path.basename(stl_path)
+    country_token = country.replace(" ", "_")
+    if not (basename == f"{country_token}_solid.stl" or
+            basename == f"{country_token}_starup.stl"):
+        return QCResult.skipped(
+            "land_missing_or_extra",
+            f"sub-piece ({basename}) — alignment metric only meaningful "
+            f"for whole-country STLs",
+        )
     try:
         country_poly = _load_country_polygon_wgs84(country, ne_path)
         if country_poly is None:

@@ -248,32 +248,40 @@ def resolve_capital(
 def _premirror_xy_from_postscale(
     x_post: float, y_post: float,
     premirror_xmax: float,
+    premirror_ymin: float = 0.0,
 ) -> tuple[float, float]:
-    """Invert the mirror+scale that ``process_country`` applies right
-    before STL export.
+    """Invert the mirror+scale+rezero that ``process_country`` applies
+    right before STL export.
 
     ``process_country`` does (with ``GLOBAL_XY_SCALE = pipe.GLOBAL_XY_SCALE``
     and ``MIRROR_X = pipe.MIRROR_X``):
 
-        post = (premirror_xmax - premirror) * scale       if MIRROR_X
-        post = premirror * scale                          else
-        y_post = premirror_y * scale  (no mirror)
+        post_scale_x   = premirror_x * scale
+        post_scale_y   = premirror_y * scale
+        post_mirror_x  = (premirror_xmax - premirror_x) * scale   if MIRROR_X
+        post_mirror_y  = post_scale_y                              (no mirror on Y)
+        # X re-zero: x_post -= x_post.min()  → x_post.min() becomes 0
+        # Y re-zero (added 2026-05-19): y_post -= y_post.min()
+        #   y_post.min() before rezero = premirror_ymin * scale.
 
-    Then a vertex-translate shifts so x_post.min() == 0, so for ``MIRROR_X``:
+    Net inversion:
 
-        x_post = (premirror_xmax - premirror_x) * scale - 0  (already zeroed)
+        premirror_x = premirror_xmax - x_post / scale          if MIRROR_X
+        premirror_y = (y_post + premirror_ymin * scale) / scale
+                    = y_post / scale + premirror_ymin
 
-    The inverse is therefore:
-
-        premirror_x = premirror_xmax - x_post / scale
-        premirror_y = y_post / scale
+    The Y inversion needs ``premirror_ymin`` because the Y re-zero shifts
+    every vertex by ``-premirror_ymin * scale``. Default 0.0 for callers
+    that haven't been updated yet — works correctly when smoothing
+    erosion at the top is negligible, but undercounts by exactly
+    ``premirror_ymin`` worth of CRS-m when there's a real top margin.
     """
     scale = pipe.GLOBAL_XY_SCALE
     if pipe.MIRROR_X:
         premirror_x = premirror_xmax - x_post / scale
     else:
         premirror_x = x_post / scale
-    premirror_y = y_post / scale
+    premirror_y = y_post / scale + premirror_ymin
     return premirror_x, premirror_y
 
 
@@ -293,12 +301,17 @@ def _mesh_bbox_crs_for_subpiece(
     """
     pb = pmeta["premirror_bounds_mm"]
     premirror_xmax = pb["xmax"]
+    premirror_ymin = pb["ymin"]
     # Sub-piece post-mirror-scale bounds.
     sx0, sy0 = subpiece_post_bounds[0, 0], subpiece_post_bounds[0, 1]
     sx1, sy1 = subpiece_post_bounds[1, 0], subpiece_post_bounds[1, 1]
-    # Invert mirror+scale per corner.
-    pre_x0, pre_y0 = _premirror_xy_from_postscale(sx0, sy0, premirror_xmax)
-    pre_x1, pre_y1 = _premirror_xy_from_postscale(sx1, sy1, premirror_xmax)
+    # Invert mirror+scale+rezero per corner. premirror_ymin is needed
+    # because process_country re-zeros stl_y so y_post.min() = 0; without
+    # adding it back here the resulting pre_y is offset by exactly that
+    # amount (= 48 km of CRS-Y for Sri Lanka), causing back-projection
+    # to render the STL ~0.43° lat south of where the mesh actually is.
+    pre_x0, pre_y0 = _premirror_xy_from_postscale(sx0, sy0, premirror_xmax, premirror_ymin)
+    pre_x1, pre_y1 = _premirror_xy_from_postscale(sx1, sy1, premirror_xmax, premirror_ymin)
     # MIRROR_X swaps the X-min and X-max in pre-mirror space.
     pre_xmin = min(pre_x0, pre_x1)
     pre_xmax = max(pre_x0, pre_x1)
@@ -334,6 +347,7 @@ def _make_mesh_to_wgs84(
         return None
     pb = pmeta["premirror_bounds_mm"]
     premirror_xmax = pb["xmax"]
+    premirror_ymin = pb["ymin"]
     tx_c = pmeta["dem_transform_c"]
     tx_f = pmeta["dem_transform_f"]
     tx_a = pmeta["dem_transform_a"]
@@ -344,7 +358,9 @@ def _make_mesh_to_wgs84(
     )
 
     def mesh_to_wgs84(x_mm: float, y_mm: float) -> tuple[float, float]:
-        pre_x, pre_y = _premirror_xy_from_postscale(x_mm, y_mm, premirror_xmax)
+        pre_x, pre_y = _premirror_xy_from_postscale(
+            x_mm, y_mm, premirror_xmax, premirror_ymin,
+        )
         crs_x = tx_c + (pre_x / mm_per_px) * tx_a
         crs_y = tx_f + (pre_y / mm_per_px) * tx_e
         lon, lat = transformer.transform(crs_x, crs_y)
