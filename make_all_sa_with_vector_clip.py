@@ -94,11 +94,12 @@ DEM_SMOOTH_BLEND = 0.6  # Higher blend for smoother terrain; peaks preserved sep
 TARGET_FACES = 100000
 VECTOR_SIMPLIFY_DEGREES = 0.02
 
-# Capital star parameters. NOTE: STAR_RADIUS_MM and STAR_INNER_RATIO below are
-# overridden further down by the inlined chunk that used to live in
-# make_all_sa_countries.py. The values 4.0 / 0.45 are what the pipeline has
-# actually been using in production.
-STAR_RADIUS_MM = 4.0
+# Capital star parameters. STAR_RADIUS_MM is the pre-scale outer radius;
+# the final tip-to-tip diameter in the printed STL is
+# ``2 * STAR_RADIUS_MM * GLOBAL_XY_SCALE``. With GLOBAL_XY_SCALE=0.80,
+# STAR_RADIUS_MM=2.5 → 4 mm tip-to-tip in print. Reduced from the
+# previous 4.0 (= 6.4 mm tip-to-tip) on user request 2026-05-21.
+STAR_RADIUS_MM = 2.5
 STAR_INNER_RATIO = 0.45
 STAR_POINTS = 4
 STAR_EXTRUDE_HEIGHT_MM = (
