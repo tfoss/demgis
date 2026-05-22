@@ -96,6 +96,17 @@ __all__ = [
 # CountryGroup.min_island_area_km2.
 OCEAN_MIN_AREA_KM2_DEFAULT: float = 1000.0
 
+# Minimum area for an INTERIOR RING (hole) in the final ocean extension
+# polygon. Small offshore islets (Cuba's Sabana-Camagüey cays, the
+# Jardines de la Reina, etc.) get subtracted from the sector polygon as
+# tiny holes. At the production print scale (10 km/mm), a 100 km² hole
+# is a 1×1 mm artefact — barely printable cleanly with a 0.4 mm FDM
+# nozzle. Fill holes below this threshold so the rendered ocean tile
+# stays smooth. Larger islands (Isla de la Juventud at 3,574 km²,
+# Hispaniola at 105,000 km²) remain as holes — those are real
+# geographic features the user wants to see.
+OCEAN_HOLE_MIN_AREA_KM2: float = 100.0
+
 
 # ---------------------------------------------------------------------------
 # Geometry helpers
@@ -125,6 +136,32 @@ def _components(geom: BaseGeometry) -> list[Polygon]:
 
 
 _SECTOR_SLIVER_MIN_AREA_KM2 = 10.0
+
+
+def _drop_small_holes(geom: BaseGeometry, min_area_km2: float) -> BaseGeometry:
+    """Fill interior rings (holes) below ``min_area_km2`` in km².
+
+    A polygon-with-holes whose holes represent small islands subtracted
+    from an ocean tile renders, at print scale, as a smooth ocean with
+    tiny bumps. Filling sub-threshold holes makes the rendered ocean
+    uniformly low (z=1.5 mm via bridge-vertex-lowering) and avoids
+    un-printable sub-mm² islets. Large holes (real offshore islands)
+    are kept.
+    """
+    min_area_m2 = min_area_km2 * 1_000_000.0
+    def _filter_one(poly: Polygon) -> Polygon:
+        kept = [
+            ring for ring in poly.interiors
+            if Polygon(ring).area >= min_area_m2
+        ]
+        if len(kept) == len(poly.interiors):
+            return poly
+        return Polygon(poly.exterior, kept)
+    if isinstance(geom, Polygon):
+        return _filter_one(geom)
+    if isinstance(geom, MultiPolygon):
+        return MultiPolygon([_filter_one(p) for p in geom.geoms])
+    return geom
 
 
 def _drop_sliver_components(geom: BaseGeometry) -> BaseGeometry:
@@ -819,6 +856,11 @@ def compute_ocean_extension(
     # Union all OceanExtension entries for this member (when there's
     # more than one — rare, but the schema permits it).
     result = _safe_union(per_extension_polygons)
+
+    # Fill small island-holes in the unioned ocean polygon so the
+    # rendered ocean tile doesn't have a constellation of un-printable
+    # sub-mm² bumps. See OCEAN_HOLE_MIN_AREA_KM2 for rationale.
+    result = _drop_small_holes(result, OCEAN_HOLE_MIN_AREA_KM2)
 
     if report is not None:
         report["sector_polygons"] = report_sectors
