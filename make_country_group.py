@@ -551,7 +551,17 @@ def split_member_stl(
     is the regression-safe path for Korea/Japan/Cuba/etc.
     """
     import trimesh
-    suffix = "_starup" if group.extrude_star.get(member, False) else "_solid"
+    # The actual extrude decision may differ from the group config when
+    # ``process_country`` auto-detects a coastal capital and overrides
+    # ``extrude_star`` to True. Prefer the pipeline's reported choice via
+    # ``pmeta["extrude_star_used"]``; fall back to the group config for
+    # legacy pmeta dicts.
+    extrude_used = (
+        pmeta.get("extrude_star_used")
+        if pmeta and "extrude_star_used" in pmeta
+        else group.extrude_star.get(member, False)
+    )
+    suffix = "_starup" if extrude_used else "_solid"
     member_safe = member.replace(" ", "_")
     orig_stl_name = f"{member_safe}{suffix}.stl"
     orig_stl_path = os.path.join(out_dir, orig_stl_name)
@@ -913,7 +923,14 @@ def build_alignment(
         # (component=mainland) also gets the bare <Member> key, so
         # consumers looking up by member name still find a single STL.
         sub_pieces = (split_pieces_by_member or {}).get(cname, [])
-        suffix = "_starup" if group.extrude_star.get(cname, False) else "_solid"
+        # Use the pipeline's actual extrude decision if available (coastal
+        # auto-detect may flip a group's default), fall back to group config.
+        cname_extrude_used = (
+            pmeta.get("extrude_star_used")
+            if pmeta and "extrude_star_used" in pmeta
+            else group.extrude_star.get(cname, False)
+        )
+        suffix = "_starup" if cname_extrude_used else "_solid"
         fallback_stl = os.path.join(
             out_dir, f"{cname.replace(' ', '_')}{suffix}.stl"
         )
@@ -1389,8 +1406,14 @@ def main():
                     print(f"\n!!! SPLIT FAILED for {member}: {e}")
                     traceback.print_exc()
                     # Fall back to a single sub-piece pointing at the
-                    # untouched STL, so QC + alignment still work.
-                    suffix = "_starup" if group.extrude_star.get(member, False) else "_solid"
+                    # untouched STL, so QC + alignment still work. Use the
+                    # pipeline's actual extrude decision when available.
+                    fb_extrude_used = (
+                        meta.get("extrude_star_used")
+                        if isinstance(meta, dict) and "extrude_star_used" in meta
+                        else group.extrude_star.get(member, False)
+                    )
+                    suffix = "_starup" if fb_extrude_used else "_solid"
                     fallback_stl = os.path.join(
                         out_dir, f"{member.replace(' ', '_')}{suffix}.stl"
                     )

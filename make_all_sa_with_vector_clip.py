@@ -1331,7 +1331,33 @@ def process_country(
         if lakes_cut > 0:
             print(f"  ✓ Removed {lakes_cut} lakes as holes")
 
-    # Add or cut capital star
+    # Add or cut capital star. Auto-detect coastal capitals: if the capital
+    # is within ``STAR_RADIUS_MM`` of the country's boundary (in pre-scale
+    # mesh-mm), a cut hole would bite into the coastline, so we extrude
+    # instead. ``boundary.distance`` works whether the capital sits inside
+    # or outside the polygon, so a capital that lands marginally outside
+    # the simplified country polygon (e.g. Port-au-Prince on a thin
+    # peninsula after VECTOR_SIMPLIFY_DEGREES) still triggers extrusion
+    # rather than a no-op cut. Explicit ``extrude_star=True`` from the
+    # group config bypasses the threshold check and always extrudes
+    # (Denmark / Copenhagen).
+    if not extrude_star and capital_xy_mm is not None and country_geom_mm is not None:
+        from shapely.geometry import Point as _StarPt
+        try:
+            cap_pt = _StarPt(*capital_xy_mm)
+            dist_mm = country_geom_mm.boundary.distance(cap_pt)
+            if dist_mm < STAR_RADIUS_MM:
+                inside = country_geom_mm.intersects(cap_pt)
+                where = "inland" if inside else "just outside"
+                print(
+                    f"  Capital is {dist_mm:.2f} mm from coast "
+                    f"({where}; < STAR_RADIUS_MM={STAR_RADIUS_MM}); "
+                    f"auto-extruding instead of cutting hole."
+                )
+                extrude_star = True
+        except Exception as _e:
+            print(f"  capital-coast distance check failed: {_e}")
+
     if extrude_star:
         # Always use local base for extruded stars to avoid deep pillars
         print("  Extruding capital star (using local base)...")
@@ -1427,6 +1453,7 @@ def process_country(
     # Return per-piece metadata for the driver / alignment.json
     return {
         "stl_path": out_path,
+        "extrude_star_used": bool(extrude_star),
         "premirror_bounds_mm": {
             "xmin": float(_premirror_bounds_mm[0, 0]),
             "ymin": float(_premirror_bounds_mm[0, 1]),
