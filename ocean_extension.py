@@ -366,6 +366,28 @@ def _build_pair_sector_ee(
     if third_party_land_union is not None:
         sector_union = _safe_difference(sector_union, third_party_land_union)
 
+    # 3.7 connectivity filter: keep only sector components that touch A's
+    # coast. When a third-party landmass sits between A and B (Haiti
+    # between Cuba and DR), step 3.6 cuts the original Cuba→DR sector
+    # into two pieces: one between Cuba and Haiti, one between Haiti and
+    # DR. The Haiti-DR piece is geographically nonsense — Cuba doesn't
+    # reach there directly. Drop any component that doesn't touch A.
+    if isinstance(sector_union, (Polygon, MultiPolygon)) and not sector_union.is_empty:
+        # `intersects` covers touch and overlap; with a tiny buffer on A
+        # to absorb sub-mm float noise along the shared coast.
+        A_near = A_full.buffer(1.0) if A_full and not A_full.is_empty else A_full
+        kept = [
+            p for p in _components(sector_union)
+            if A_near is not None and not A_near.is_empty
+            and p.intersects(A_near)
+        ]
+        if len(kept) == 0:
+            sector_union = Polygon()
+        elif len(kept) == 1:
+            sector_union = kept[0]
+        else:
+            sector_union = MultiPolygon(kept)
+
     return sector_union
 
 
@@ -484,6 +506,65 @@ def _discover_neighbour_names(
                        a_area_km2, b_area_km2):
             continue
         filtered.append(cand)
+
+    # Obstruction filter: candidate B is obstructed by candidate C iff
+    #   (1) C and B lie at nearly the same bearing from A's centroid
+    #       (within OBSTRUCTION_ANGLE_DEG), AND
+    #   (2) C is significantly closer to A than B is (closer than
+    #       OBSTRUCTION_CLOSER_RATIO × B's distance).
+    # Both conditions together pick out cases where C is "in front of"
+    # B along A's line of sight. The angle threshold filters out
+    # candidates at different angles (Bahamas vs USA from Cuba: same
+    # rough direction but ~30° apart); the closer-ratio filter
+    # excludes side-by-side neighbours (Belgium and NL from UK: similar
+    # bearing but both have direct ocean access at comparable distance).
+    #
+    # Concretely: Cuba→DR is obstructed by Haiti because Haiti and DR
+    # share a land border on Hispaniola — the bearing diff is < 1° and
+    # Haiti is ~37% of DR's distance from Cuba.
+    if len(filtered) > 1:
+        import math
+        OBSTRUCTION_ANGLE_DEG = 15.0
+        OBSTRUCTION_CLOSER_RATIO = 0.5
+        def _main_sub(name: str) -> BaseGeometry:
+            idx = names.index(name)
+            g = geoms[idx]
+            comps = _components(g)
+            return max(comps, key=lambda p: p.area) if comps else g
+        a_comps = _components(member_geom_ee)
+        a_main = max(a_comps, key=lambda p: p.area) if a_comps else member_geom_ee
+        a_centroid = a_main.centroid
+        main_by_name = {n: _main_sub(n) for n in filtered}
+        def _bearing(target):
+            t = target.centroid
+            return math.atan2(t.y - a_centroid.y, t.x - a_centroid.x)
+        def _angle_diff(a, b):
+            d = (a - b + math.pi) % (2.0 * math.pi) - math.pi
+            return abs(d)
+        bearing_by_name = {n: _bearing(g) for n, g in main_by_name.items()}
+        dist_by_name = {n: a_main.distance(g) for n, g in main_by_name.items()}
+        non_obstructed: list[str] = []
+        for cand in filtered:
+            blocker = None
+            angle_thresh = math.radians(OBSTRUCTION_ANGLE_DEG)
+            cand_dist = dist_by_name[cand]
+            for other in filtered:
+                if other == cand:
+                    continue
+                if _angle_diff(bearing_by_name[cand], bearing_by_name[other]) > angle_thresh:
+                    continue
+                if dist_by_name[other] >= OBSTRUCTION_CLOSER_RATIO * cand_dist:
+                    continue
+                blocker = other
+                break
+            if blocker is not None:
+                print(f"      {member}: candidate {cand!r} obstructed by "
+                      f"{blocker!r} (same bearing, "
+                      f"{dist_by_name[blocker]/cand_dist:.2f}x closer); "
+                      f"skipping.")
+                continue
+            non_obstructed.append(cand)
+        filtered = non_obstructed
 
     return filtered
 
