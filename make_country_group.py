@@ -1443,17 +1443,24 @@ def main():
     # 4b. Bambu 3MF wrap per sub-piece. Each STL gets a sibling .3mf
     #     with per-triangle filament assignments encoded via Bambu's
     #     ``paint_color`` attribute. Tile-type rule:
-    #     * member has ``ocean_extensions`` → ``country_ocean`` (ocean
-    #       band at z ≤ 1.98 plus the 7 country bands).
-    #     * otherwise → ``country`` (the 7 country bands).
-    #     Future Cat 2B water-body members will pick ``ocean``.
+    #     * member's orchestrator-output ``ocean_extensions_ee`` is
+    #       non-empty → ``country_ocean`` (ocean blue band at z ≤ 1.98
+    #       plus the 7 country bands).
+    #     * otherwise → ``country`` (the 7 country bands; no blue).
+    #     Note: a group config can DECLARE ``ocean_extensions`` for a
+    #     member but still get an empty actual extension (landlocked
+    #     members, all candidates obstructed, etc.). In that case the
+    #     mesh has no bridge-lowered region, so the country_ocean
+    #     blue band would paint the base bottom + side walls of a
+    #     pure-land country. We key off the ACTUAL extension geometry
+    #     instead of the declared config to avoid this.
     if not args.no_3mf:
         from paint_elevation_3mf import paint_and_save
         print(f"\nWrapping pieces as Bambu 3MF...")
         for member, pieces in split_pieces_by_member.items():
-            tile_type = ("country_ocean"
-                         if group.ocean_extensions.get(member)
-                         else "country")
+            has_ocean = bool(ocean_extensions_ee.get(member)) and \
+                not ocean_extensions_ee[member].is_empty
+            tile_type = "country_ocean" if has_ocean else "country"
             for piece in pieces:
                 stl_path = piece["stl"]
                 if not os.path.exists(stl_path):
