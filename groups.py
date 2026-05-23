@@ -476,3 +476,60 @@ GROUPS: dict[str, CountryGroup] = {
     "Germany":          CountryGroup(name="Germany", members=["Germany"]),
     "Tajikistan":       CountryGroup(name="Tajikistan", members=["Tajikistan"]),
 }
+
+
+# ---------------------------------------------------------------------------
+# Americas single-country groups (added 2026-05-23 for full-Americas batch)
+#
+# Each entry is one CountryGroup with the source country as the sole member.
+# All coastal countries get an OceanExtension with auto-discovery so adjacent
+# tiles can share a printable ocean seam. island_halo_km=25 protects the
+# open-ocean coasts (Pacific, Atlantic, Caribbean) from MASK_SMOOTH_SIGMA_PIX
+# erosion — same fix as Sri Lanka. max_distance_km=400 covers Americas
+# neighbour-spacing without reaching distant continents.
+#
+# Landlocked countries (Bolivia, Paraguay) still get an OceanExtension entry
+# — the orchestrator short-circuits empty when classes[member]=='landlocked'.
+# That keeps the group definitions uniform without special-casing.
+#
+# Cuba/Jamaica/Haiti/DR are NOT included here — they belong to the
+# Cuba_Caribbean group above.
+# ---------------------------------------------------------------------------
+
+def _americas_default(country: str) -> "CountryGroup":
+    """One-line factory: single-member group with the standard Americas
+    OceanExtension defaults."""
+    return CountryGroup(
+        name=country.replace(" ", "_"),
+        members=[country],
+        ocean_extensions={
+            country: [
+                OceanExtension(
+                    auto_discover_neighbors=True,
+                    max_distance_km=400.0,
+                    island_halo_km=25.0,
+                ),
+            ],
+        },
+    )
+
+
+_AMERICAS_COUNTRIES = [
+    # North + Central America
+    "Canada", "United States of America", "Mexico", "Greenland",
+    "Guatemala", "Belize", "El Salvador", "Honduras", "Nicaragua",
+    "Costa Rica", "Panama",
+    # Caribbean (sovereign island states not in Cuba_Caribbean)
+    "The Bahamas", "Trinidad and Tobago", "Dominica", "Saint Lucia",
+    "Barbados", "Saint Vincent and the Grenadines", "Grenada",
+    "Antigua and Barbuda", "Saint Kitts and Nevis",
+    "Curaçao", "Aruba", "Sint Maarten",
+    # South America
+    "Colombia", "Venezuela", "Guyana", "Suriname", "Brazil", "Ecuador",
+    "Peru", "Bolivia", "Chile", "Argentina", "Paraguay", "Uruguay",
+]
+for _c in _AMERICAS_COUNTRIES:
+    _key = _c.replace(" ", "_")
+    if _key in GROUPS:
+        continue
+    GROUPS[_key] = _americas_default(_c)
