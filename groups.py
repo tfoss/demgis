@@ -533,3 +533,87 @@ for _c in _AMERICAS_COUNTRIES:
     if _key in GROUPS:
         continue
     GROUPS[_key] = _americas_default(_c)
+
+
+# ---------------------------------------------------------------------------
+# World-wide single-country groups (added 2026-05-25 for global non-tiny batch)
+#
+# Same factory shape as `_americas_default` — single-member groups with auto-
+# discovering OceanExtension at 400 km + 25 km island halo. Threshold for
+# inclusion is ~200 km² (Sint_Maarten at 23 km² fails "No faces built from
+# DEM"; Aruba at 170 km² works). Disputed-territory and uninhabited entries
+# from Natural Earth (Antarctica, Bir Tawil, Spratly Islands, Akrotiri /
+# Dhekelia, etc.) are deliberately omitted.
+# ---------------------------------------------------------------------------
+
+_AFRICA_COUNTRIES = [
+    "Democratic Republic of the Congo", "Algeria", "Sudan", "Libya", "Chad",
+    "Mali", "Angola", "South Africa", "Niger", "Ethiopia", "Mauritania",
+    "Egypt", "United Republic of Tanzania", "Nigeria", "Namibia",
+    "Mozambique", "Zambia", "South Sudan", "Central African Republic",
+    "Morocco", "Kenya", "Botswana", "Somalia", "Cameroon", "Zimbabwe",
+    "Republic of the Congo", "Ivory Coast", "Gabon", "Guinea", "Uganda",
+    "Ghana", "Senegal", "Somaliland", "Tunisia", "Eritrea", "Malawi",
+    "Benin", "Liberia", "Western Sahara", "Sierra Leone", "Togo",
+    "Guinea-Bissau", "Lesotho", "Burundi", "Equatorial Guinea", "Rwanda",
+    "Djibouti", "eSwatini", "Gambia", "Cabo Verde", "Comoros",
+    "São Tomé and Principe", "Mauritius", "Seychelles",
+]
+
+_EUROPE_COUNTRIES = [
+    "Russia", "Ukraine", "Spain", "Sweden", "Norway", "Finland", "Poland",
+    "Italy", "Romania", "Belarus", "Greece", "Bulgaria", "Iceland",
+    "Hungary", "Portugal", "Austria", "Czechia", "Republic of Serbia",
+    "Lithuania", "Latvia", "Croatia", "Bosnia and Herzegovina", "Slovakia",
+    "Estonia", "Switzerland", "Netherlands", "Moldova", "Belgium",
+    "Albania", "North Macedonia", "Slovenia", "Montenegro", "Kosovo",
+    "Luxembourg", "Faroe Islands", "Andorra", "Isle of Man", "Malta",
+]
+
+_ASIA_COUNTRIES = [
+    "China", "India", "Kazakhstan", "Saudi Arabia", "Indonesia", "Iran",
+    "Mongolia", "Pakistan", "Turkey", "Myanmar", "Afghanistan", "Thailand",
+    "Turkmenistan", "Yemen", "Uzbekistan", "Iraq", "Vietnam", "Malaysia",
+    "Oman", "Philippines", "Laos", "Kyrgyzstan", "Syria", "Cambodia",
+    "Bangladesh", "Nepal", "North Korea", "Jordan", "Azerbaijan",
+    "United Arab Emirates", "Georgia", "Bhutan", "Taiwan", "Armenia",
+    "East Timor", "Kuwait", "Qatar", "Lebanon", "Palestine", "Brunei",
+    "Cyprus", "Hong Kong S.A.R.", "Bahrain", "Singapore",
+]
+
+_OCEANIA_COUNTRIES = [
+    "Australia", "Papua New Guinea", "New Zealand", "Solomon Islands",
+    "Fiji", "New Caledonia", "Vanuatu", "French Polynesia", "Samoa",
+    "Kiribati", "Federated States of Micronesia", "Tonga",
+    "Northern Mariana Islands", "Guam", "Palau", "Niue", "Cook Islands",
+]
+
+# Americas entries from Natural Earth above 200 km² that weren't in the
+# original Americas batch (overseas territories + Falklands + Puerto Rico).
+_AMERICAS_EXTRA = [
+    "Falkland Islands", "Puerto Rico", "Turks and Caicos Islands",
+    "Cayman Islands", "United States Virgin Islands",
+    "Saint Pierre and Miquelon",
+]
+
+for _bucket in (
+    _AFRICA_COUNTRIES, _EUROPE_COUNTRIES, _ASIA_COUNTRIES,
+    _OCEANIA_COUNTRIES, _AMERICAS_EXTRA,
+):
+    for _c in _bucket:
+        _key = _c.replace(" ", "_")
+        if _key in GROUPS:
+            continue
+        GROUPS[_key] = _americas_default(_c)
+
+
+# Canada is a known failure case for the post-halo continental rule: its NE
+# polygon has 400+ sub-polygons (Arctic Archipelago + countless coastal
+# islets) which the prior island halo was merging into a single buffered
+# shape. With the halo gated off for continental members, each island enters
+# the vector-clip cutter as a separate extrusion; the 1.2 M-face intersection
+# result fails manifold_clean ("not a watertight volume") regardless of how
+# many islands we filter out (tried 100 / 500 / 5000 km² — same failure).
+# Proper fix would union the islands in shapely before extrusion. Until then,
+# the older 2026-05-23 Canada outputs (pre-halo-removal) remain the working
+# set in STLs/Canada/.

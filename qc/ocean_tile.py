@@ -471,6 +471,7 @@ def halo_present(
     *,
     member_name: str = "",
     coverage_tolerance: float = 0.05,
+    other_land_union: Optional[BaseGeometry] = None,
 ) -> QCResult:
     """Verify ``ext_geom`` contains an ``island_halo_km``-wide halo
     around every coast of ``member_geom``.
@@ -482,6 +483,14 @@ def halo_present(
     enforces that the extension geometry covers the expected ring.
 
     Expected halo = ``member_geom.buffer(island_halo_km * 1000) - member_geom``.
+    When ``other_land_union`` is provided (the union of all NE land
+    polygons except ``member_geom``), it is also subtracted — a halo
+    can't extend into a neighbour's land, and the orchestrator's
+    step-3.6 third-party-land subtraction enforces this. Without the
+    subtraction, continental countries with land borders fail
+    spuriously (e.g. Honduras's 25 km halo is blocked on three sides
+    by Guatemala / El Salvador / Nicaragua, so the "expected" ring
+    is half missing if those neighbours aren't excluded).
     Pass iff ``expected_halo.difference(ext_geom).area / expected_halo.area
     < coverage_tolerance``.
     """
@@ -507,6 +516,15 @@ def halo_present(
 
     buffer_m = island_halo_km * 1000.0
     expected_halo = member_geom.buffer(buffer_m).difference(member_geom)
+    # Subtract neighbours' land — the halo physically cannot extend
+    # into other countries (the orchestrator's step 3.6 already does
+    # this on the actual extension). For pure-archipelago countries
+    # surrounded by ocean (Japan, Philippines), this is a no-op.
+    if other_land_union is not None and not other_land_union.is_empty:
+        try:
+            expected_halo = expected_halo.difference(other_land_union)
+        except Exception:
+            pass
     if expected_halo.is_empty:
         return QCResult.skipped(name, "expected halo is empty (degenerate member)")
 
@@ -729,6 +747,7 @@ def run_all_ocean_checks(
     ] = None,
     ocean_configs: Optional[Mapping[str, Any]] = None,
     island_halo_km_by_member: Optional[Mapping[str, float]] = None,
+    other_land_union_by_member: Optional[Mapping[str, BaseGeometry]] = None,
     global_xy_scale: float = 0.33,
     xy_mm_per_pixel: float = 0.25,
     pixel_w: float = 2000.0,
@@ -837,9 +856,12 @@ def run_all_ocean_checks(
                 halo_km = getattr(cfg, "island_halo_km", None)
         if halo_km is None:
             halo_km = 0.0
+        other_land = None
+        if other_land_union_by_member is not None:
+            other_land = other_land_union_by_member.get(member)
         report.add(halo_present(
             ext_geom=ext, member_geom=mg, island_halo_km=halo_km,
-            member_name=member,
+            member_name=member, other_land_union=other_land,
         ))
 
     # ---------- Check 4: no disconnected slivers (per member) --------------

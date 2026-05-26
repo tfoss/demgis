@@ -1035,6 +1035,7 @@ def run_qc(
     member_geoms_ee: Optional[dict] = None,
     ocean_neighbours_ee: Optional[dict] = None,
     ocean_sector_polys_ee: Optional[dict] = None,
+    ocean_other_land_ee: Optional[dict] = None,
     pipeline_scale: float = 0.33,
     pipeline_mm_per_pixel: float = 0.25,
     pipeline_pixel_w: float = 2000.0,
@@ -1134,6 +1135,7 @@ def run_qc(
                 member_geoms_ee=member_geoms_ee,
                 sector_polygons_by_member=ocean_sector_polys_ee,
                 neighbour_geoms_by_member=ocean_neighbours_ee,
+                other_land_union_by_member=ocean_other_land_ee or {},
                 ocean_configs=ocean_configs,
                 # Threshold conversion uses the full pipeline scaling
                 # chain (pixel_w / XY_MM_PER_PIXEL / GLOBAL_XY_SCALE).
@@ -1304,6 +1306,7 @@ def main():
     ocean_member_geoms_ee: dict = {}
     ocean_neighbours_ee: dict = {}
     ocean_sector_polys_ee: dict = {}
+    ocean_other_land_ee: dict = {}
 
     if group.ocean_extensions:
         print(f"\nConstructing ocean extensions...")
@@ -1360,6 +1363,20 @@ def main():
                     print(f"  WARNING: {m} not found in NE EE for QC")
                     continue
                 ocean_member_geoms_ee[m] = unary_union(list(sel.geometry.values))
+            # Other-land union (all NE land minus the member). Used by
+            # halo_present so continental countries with land borders
+            # don't fail spuriously when neighbours block the halo ring.
+            # Cached once per group since recomputing the world union per
+            # member is wasteful; we then subtract each member from the
+            # cached union to get its specific other-land.
+            world_land_union = unary_union(
+                list(precompute.ne_ee.geometry.values)
+            )
+            for m in ocean_extensions_ee:
+                mg = ocean_member_geoms_ee.get(m)
+                if mg is None or mg.is_empty:
+                    continue
+                ocean_other_land_ee[m] = world_land_union.difference(mg)
 
     # 4. Render each member.
     # Resolve effective capital per member (regional override → default →
@@ -1527,6 +1544,7 @@ def main():
             member_geoms_ee=ocean_member_geoms_ee or None,
             ocean_neighbours_ee=ocean_neighbours_ee or None,
             ocean_sector_polys_ee=ocean_sector_polys_ee or None,
+            ocean_other_land_ee=ocean_other_land_ee or None,
             # Pipeline scale knobs for the print-mm <-> CRS-m conversion
             # in the seam-consistency check.
             pipeline_scale=pipe.GLOBAL_XY_SCALE,

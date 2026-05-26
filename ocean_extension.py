@@ -723,7 +723,14 @@ def compute_ocean_extension(
 
         # ---- Step 1: archipelago island halo around A's full geom.
         # Opt-in: skip entirely when island_halo_km == 0 (the default).
-        if ext.island_halo_km > 0:
+        # Also skipped for non-island members — the halo's purpose is to
+        # anchor own-country islands and protect open-ocean coasts from
+        # smoothing erosion, neither of which applies to a continental
+        # country with a land-bordered coastline. Without this gate two
+        # adjacent continental tiles (e.g. Suriname + Guyana) ship with
+        # 25 km buffer halos that overlap along their shared coast and
+        # prevent the printed pieces from joining.
+        if ext.island_halo_km > 0 and classes.get(member) == "island":
             halo_raw = A_full.buffer(ext.island_halo_km * 1000.0)
             halo_filled = _fill_internal_holes(halo_raw)
             halo = halo_filled.difference(A_full)
