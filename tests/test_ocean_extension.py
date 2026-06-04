@@ -296,7 +296,10 @@ def test_ownership_korea_does_not_get_sector_to_japan(bundle, ne_ee):
     )
 
     # And the full orchestrator output mustn't contain the deep-SoJ
-    # probe.
+    # probe. Continental members now also have the halo gated off
+    # (commit 61bde4d), so Korea's per-member result for an
+    # island-only neighbour set collapses to empty — which trivially
+    # satisfies the ownership invariant.
     group = CountryGroup(
         name="KoreaOwnsTest",
         members=["South Korea"],
@@ -305,7 +308,6 @@ def test_ownership_korea_does_not_get_sector_to_japan(bundle, ne_ee):
     result = oxt.compute_ocean_extension(
         "South Korea", group, ne_ee, bundle,
     )
-    assert not result.is_empty   # halo still applies
     assert not result.contains(sea_of_japan), (
         "Korea (continental) should not produce a deep Sea-of-Japan "
         "sector polygon when ownership rule is honoured (Japan owns)."

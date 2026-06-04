@@ -45,7 +45,7 @@ services:
       MPLBACKEND: Agg
     volumes:
       - .:/workspace
-      - ${DEM_DATA:-./_no_dem_data_set}:/data:ro
+      # - ${DEM_DATA:-./_no_dem_data_set}:/data:ro ## hiding for now, the main dem is built, so dont need raw tiles.
       - ${OVERFLOW_TILES:-./_no_overflow_set}/dem_tiles_overflow:/data_overflow:ro
       - ${STL_OUT:-./outputs}:/outputs
       - ${HOME}/.claude:/home/demgis/.claude
