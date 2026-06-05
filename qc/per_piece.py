@@ -325,8 +325,18 @@ def check_capital_star_present(
     if country is None:
         return QCResult.skipped("capital_star_present", "no country provided")
     if country not in CAPITALS:
-        return QCResult.skipped("capital_star_present",
-                                f"no capital known for {country!r}")
+        # Hard fail. Silently skipping here lets new country groups
+        # ship without a capital star — see Serbia/Slovenia incident
+        # 2026-06-04, where 160 of 201 single-country groups had no
+        # capitals.json entry and shipped starless without QC catching it.
+        return QCResult(
+            name="capital_star_present",
+            passed=False,
+            value={"country": country},
+            threshold={"country_in_capitals": True},
+            message=(f"no capital known for {country!r} — "
+                     "add an entry to capitals.json"),
+        )
     try:
         det = _detect_star_xy_mm(mesh)
     except Exception as e:
