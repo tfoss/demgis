@@ -8,7 +8,7 @@
 .DS_Store
 country_dems/
 __pycache__/
-__eqearth_intermediates/
+_eqearth_intermediates/
 
 # QC harness run outputs (timestamped JSON reports)
 qc_check_*.json
