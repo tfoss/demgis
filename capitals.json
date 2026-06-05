@@ -244,6 +244,11 @@
     "lat": 15.301,
     "lon": -61.387
   },
+  "Dominican Republic": {
+    "city": "Santo Domingo",
+    "lat": 18.4861,
+    "lon": -69.9312
+  },
   "East Timor": {
     "city": "Dili",
     "lat": -8.5594,
@@ -389,6 +394,11 @@
     "lat": 6.8013,
     "lon": -58.1553
   },
+  "Haiti": {
+    "city": "Port-au-Prince",
+    "lat": 18.5944,
+    "lon": -72.335
+  },
   "Honduras": {
     "city": "Tegucigalpa",
     "lat": 14.104,
@@ -453,6 +463,16 @@
     "city": "Yamoussoukro",
     "lat": 6.8184,
     "lon": -5.2755
+  },
+  "Jamaica": {
+    "city": "Kingston",
+    "lat": 18.0179,
+    "lon": -76.7936
+  },
+  "Japan": {
+    "city": "Tokyo",
+    "lat": 35.6895,
+    "lon": 139.6917
   },
   "Jordan": {
     "city": "Amman",
@@ -835,9 +855,14 @@
     "lon": 44.0653
   },
   "South Africa": {
-    "city": "Bloemfontein",
-    "lat": -29.12,
-    "lon": 26.2299
+    "city": "Pretoria",
+    "lat": -25.7479,
+    "lon": 28.2293
+  },
+  "South Korea": {
+    "city": "Seoul",
+    "lat": 37.5665,
+    "lon": 126.978
   },
   "South Sudan": {
     "city": "Juba",

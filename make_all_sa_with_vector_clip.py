@@ -106,141 +106,15 @@ STAR_EXTRUDE_HEIGHT_MM = (
     2.0  # Height to extrude star above surface (when using --extrude-star)
 )
 
-# CAPITALS dict for all regions is defined ~20 lines below. Previously this
-# file had an exec(open("make_all_sa_countries.py")...) hack down at line ~217
-# which silently overwrote that dict with a 13-entry SA-only one — so for
-# years only the 13 SA capitals were actually available at runtime. The exec
-# is gone and the full 103-country dict below is now live. The canonical
-# source going forward is capitals.json (load_capitals.py); TODO(refactor):
-# replace the dict with `from load_capitals import CAPITALS`.
+# CAPITALS is loaded from capitals.json via load_capitals.py. The dict that
+# used to live inline (last seen as a 103-entry literal) has been removed in
+# favour of the single JSON source. A prior version had an
+# exec(open("make_all_sa_countries.py")...) hack at ~line 217 that silently
+# overwrote the inline dict with a 13-entry SA-only one; both layers are gone.
+from load_capitals import CAPITALS  # noqa: E402
 
 # Lake removal (optional feature via --remove-lakes)
 MIN_LAKE_AREA_KM2 = 100.0  # Remove lakes larger than this (as holes in the mesh)
-
-CAPITALS = {
-    # South America
-    "Argentina": ("Buenos Aires", -58.3816, -34.6037),
-    "Bolivia": ("La Paz", -68.1193, -16.4897),
-    "Brazil": ("Brasilia", -47.8825, -15.7942),
-    "Chile": ("Santiago", -70.6693, -33.4489),
-    "Colombia": ("Bogotá", -74.0721, 4.7110),
-    "Ecuador": ("Quito", -78.4678, -0.1807),
-    "Guyana": ("Georgetown", -58.1553, 6.8013),
-    "Paraguay": ("Asunción", -57.5759, -25.2637),
-    "Peru": ("Lima", -77.0428, -12.0464),
-    "Suriname": ("Paramaribo", -55.2038, 5.8520),
-    "Uruguay": ("Montevideo", -56.1645, -34.9011),
-    "Venezuela": ("Caracas", -66.9036, 10.4806),
-    "French Guiana": ("Cayenne", -52.3350, 4.9220),
-    # Middle East
-    "Turkey": ("Ankara", 32.8597, 39.9334),
-    "Syria": ("Damascus", 36.2765, 33.5138),
-    "Lebanon": ("Beirut", 35.4951, 33.8886),
-    "Israel": ("Jerusalem", 35.2137, 31.7683),
-    "Palestine": ("Ramallah", 35.2063, 31.9038),
-    "Jordan": ("Amman", 35.9239, 31.9539),
-    "Iraq": ("Baghdad", 44.3661, 33.3152),
-    "Kuwait": ("Kuwait City", 47.9774, 29.3759),
-    "Saudi Arabia": ("Riyadh", 46.7219, 24.7136),
-    "Bahrain": ("Manama", 50.5861, 26.2285),
-    "Qatar": ("Doha", 51.5310, 25.2854),
-    "United Arab Emirates": ("Abu Dhabi", 54.3773, 24.4539),
-    "Oman": ("Muscat", 58.4059, 23.5880),
-    "Yemen": ("Sanaa", 44.2075, 15.3694),
-    "Iran": ("Tehran", 51.3890, 35.6892),
-    # Caucasus
-    "Georgia": ("Tbilisi", 44.8271, 41.7151),
-    "Armenia": ("Yerevan", 44.5152, 40.1792),
-    "Azerbaijan": ("Baku", 49.8671, 40.4093),
-    # Central Asia
-    "Kazakhstan": ("Astana", 71.4704, 51.1694),
-    "Uzbekistan": ("Tashkent", 69.2401, 41.2995),
-    "Turkmenistan": ("Ashgabat", 58.3260, 37.9601),
-    "Kyrgyzstan": ("Bishkek", 74.5698, 42.8746),
-    "Tajikistan": ("Dushanbe", 68.7870, 38.5598),
-    "Afghanistan": ("Kabul", 69.2075, 34.5553),
-    # North & Central America
-    "Mexico": ("Mexico City", -99.1332, 19.4326),
-    "Guatemala": ("Guatemala City", -90.5069, 14.6349),
-    "Belize": ("Belmopan", -88.7713, 17.2510),
-    "Honduras": ("Tegucigalpa", -87.2068, 14.0723),
-    "El Salvador": ("San Salvador", -89.2182, 13.6929),
-    "Nicaragua": ("Managua", -86.2362, 12.1150),
-    "Costa Rica": ("San José", -84.0907, 9.9281),
-    "Panama": ("Panama City", -79.5199, 8.9824),
-    "Cuba": ("Havana", -82.3666, 23.1136),
-    "Jamaica": ("Kingston", -76.7936, 18.0179),
-    "Haiti": ("Port-au-Prince", -72.3350, 18.5944),
-    "Dominican Republic": ("Santo Domingo", -69.9312, 18.4861),
-    # South Asia
-    "India": ("New Delhi", 77.2090, 28.6139),
-    "Pakistan": ("Islamabad", 73.0479, 33.6844),
-    "Bangladesh": ("Dhaka", 90.4125, 23.8103),
-    "Nepal": ("Kathmandu", 85.3240, 27.7172),
-    "Bhutan": ("Thimphu", 89.6419, 27.4728),
-    "Sri Lanka": ("Colombo", 79.8612, 6.9271),
-    "Maldives": ("Malé", 73.5093, 4.1755),
-    # Southeast Asia
-    "Myanmar": ("Naypyidaw", 96.1297, 19.7633),
-    "Thailand": ("Bangkok", 100.5018, 13.7563),
-    "Laos": ("Vientiane", 102.6000, 17.9757),
-    "Vietnam": ("Hanoi", 105.8542, 21.0285),
-    "Cambodia": ("Phnom Penh", 104.9160, 11.5564),
-    "Malaysia": ("Kuala Lumpur", 101.6869, 3.1390),
-    "Singapore": ("Singapore", 103.8198, 1.3521),
-    "Indonesia": ("Jakarta", 106.8650, -6.2088),
-    "Philippines": ("Manila", 120.9842, 14.5995),
-    "Brunei": ("Bandar Seri Begawan", 114.9398, 4.8895),
-    "Timor-Leste": ("Dili", 125.5736, -8.5569),
-    # East Asia
-    "China": ("Beijing", 116.4074, 39.9042),
-    "Mongolia": ("Ulaanbaatar", 106.9057, 47.8864),
-    "North Korea": ("Pyongyang", 125.7381, 39.0392),
-    "South Korea": ("Seoul", 126.9780, 37.5665),
-    "Japan": ("Tokyo", 139.6917, 35.6895),
-    "Taiwan": ("Taipei", 121.5654, 25.0330),
-    # Africa (selected major countries)
-    "Egypt": ("Cairo", 31.2357, 30.0444),
-    "Libya": ("Tripoli", 13.1913, 32.8872),
-    "Tunisia": ("Tunis", 10.1815, 36.8065),
-    "Algeria": ("Algiers", 3.0588, 36.7538),
-    "Morocco": ("Rabat", -6.8498, 33.9716),
-    "Mauritania": ("Nouakchott", -15.9785, 18.0735),
-    "Mali": ("Bamako", -8.0029, 12.6392),
-    "Niger": ("Niamey", 2.1254, 13.5127),
-    "Chad": ("N'Djamena", 15.0444, 12.1348),
-    "Sudan": ("Khartoum", 32.5599, 15.5007),
-    "Ethiopia": ("Addis Ababa", 38.7469, 9.0320),
-    "Eritrea": ("Asmara", 38.9251, 15.3229),
-    "Somalia": ("Mogadishu", 45.3182, 2.0469),
-    "Kenya": ("Nairobi", 36.8219, -1.2921),
-    "Tanzania": ("Dodoma", 35.7516, -6.1630),
-    "Uganda": ("Kampala", 32.5825, 0.3476),
-    "Rwanda": ("Kigali", 30.0619, -1.9403),
-    "South Africa": ("Pretoria", 28.2293, -25.7479),
-    "Nigeria": ("Abuja", 7.5248, 9.0765),
-    "Ghana": ("Accra", -0.1870, 5.6037),
-    # Europe (selected countries)
-    "United Kingdom": ("London", -0.1278, 51.5074),
-    "France": ("Paris", 2.3522, 48.8566),
-    "Germany": ("Berlin", 13.4050, 52.5200),
-    "Italy": ("Rome", 12.4964, 41.9028),
-    "Spain": ("Madrid", -3.7038, 40.4168),
-    "Portugal": ("Lisbon", -9.1393, 38.7223),
-    "Poland": ("Warsaw", 21.0122, 52.2297),
-    "Ukraine": ("Kyiv", 30.5234, 50.4501),
-    "Romania": ("Bucharest", 26.1025, 44.4268),
-    "Greece": ("Athens", 23.7275, 37.9838),
-    "Iceland": ("Reykjavik", -21.9426, 64.1466),
-    "Russia": ("Moscow", 37.6173, 55.7558),
-    "Ireland": ("Dublin", -6.2603, 53.3498),
-    "Denmark": ("Copenhagen", 12.5683, 55.6761),
-    "Norway": ("Oslo", 10.7522, 59.9139),
-    "Sweden": ("Stockholm", 18.0686, 59.3293),
-    "Finland": ("Helsinki", 24.9384, 60.1699),
-    "Netherlands": ("Amsterdam", 4.9041, 52.3676),
-    "Belgium": ("Brussels", 4.3517, 50.8503),
-}
 
 
 def robust_extrude_polygon(polygon, height):
