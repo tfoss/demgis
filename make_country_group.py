@@ -1315,6 +1315,35 @@ def main():
             if member not in member_proj:
                 print(f"  WARNING: ocean_extension for unknown member {member}")
                 continue
+            # Gate: skip continental members. Ownership (continental↔island
+            # → island owns; continental↔continental → neither owns) plus
+            # the bead-61bde4d halo gate already render the result empty
+            # for continentals at runtime, but bypassing the call also
+            # restores component-split (downstream `has_ocean_extension`
+            # truthiness would disable it), keeps the log clean, and
+            # documents intent at the orchestration layer. UK/NI-style
+            # entities re-classified as island by the largest-sub-polygon
+            # rule (effective_class) still flow through. Continental
+            # members opt back in by adding explicit_neighbors — the
+            # "Denmark needs to attach islands" escape hatch (though
+            # Denmark itself uses bridges, not ocean_extensions).
+            member_geom_ee = unary_union(list(
+                precompute.ne_ee[
+                    precompute.ne_ee["ADMIN"] == member
+                ].geometry.values
+            ))
+            eff_class = ocean_ext_mod.effective_class(
+                member, member_geom_ee, precompute,
+            )
+            any_explicit = any(
+                e.explicit_neighbors
+                for e in group.ocean_extensions[member]
+            )
+            if eff_class == "continental" and not any_explicit:
+                print(
+                    f"    {member}: continental — skipping ocean extension"
+                )
+                continue
             report: dict = {}
             ocean_ee = ocean_ext_mod.compute_ocean_extension(
                 member, group, precompute.ne_ee, precompute, report=report,

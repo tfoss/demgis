@@ -284,6 +284,37 @@ def _safe_union(geoms: Iterable[BaseGeometry]) -> BaseGeometry:
 
 
 # ---------------------------------------------------------------------------
+# Effective ownership class (handles UK/NI-style sub-polygon reclassification)
+# ---------------------------------------------------------------------------
+
+
+def effective_class(member, member_geom_ee, precomputes) -> str:
+    """Effective ocean-ownership class for a member.
+
+    The precompute classifies each NE entity as island / continental /
+    landlocked at the whole-country level. Multi-sub-polygon entities
+    (UK = GB + Northern Ireland) can get "continental" because at least
+    one sub-polygon shares a land border, even though the largest sub-
+    polygon is a clear island. For ocean-extension purposes the largest
+    sub-polygon wins. Bead 08 Open Question 1; same rule used by
+    `_discover_neighbour_names`.
+    """
+    whole = precomputes.country_class.get(member, "continental")
+    if whole != "continental":
+        return whole
+    subs = _components(member_geom_ee)
+    if len(subs) <= 1:
+        return whole
+    largest = max(subs, key=lambda p: p.area)
+    names = precomputes.land_names
+    geoms = list(precomputes.ne_ee.geometry.values)
+    other = [g for n, g in zip(names, geoms) if n != member]
+    if is_island_country(largest, other):
+        return "island"
+    return "continental"
+
+
+# ---------------------------------------------------------------------------
 # Ownership rule
 # ---------------------------------------------------------------------------
 
@@ -460,26 +491,15 @@ def _discover_neighbour_names(
     geoms = list(precomputes.ne_ee.geometry.values)
     classes = precomputes.country_class
 
-    # Per-sub-polygon classification: if A is a multi-component NE
-    # entity (UK = GB + Northern Ireland), the whole-country class
-    # may be "continental" because one sub-polygon (NI) shares a land
-    # border with another country (ROI), even though the largest
-    # sub-polygon (GB) is a clear island. Reclassify member as
-    # "island" for ownership purposes when its largest sub-polygon
-    # is one. See bead 08 Open Question 1.
+    # Effective class: handles UK/NI-style multi-sub-polygon
+    # reclassification (bead 08 OQ 1). See `effective_class`.
     whole_class = classes.get(member, "continental")
-    a_class = whole_class
-    if whole_class == "continental":
-        a_subs_all = _components(member_geom_ee)
-        if len(a_subs_all) > 1:
-            largest = max(a_subs_all, key=lambda p: p.area)
-            other_geoms = [g for n, g in zip(names, geoms) if n != member]
-            if is_island_country(largest, other_geoms):
-                a_class = "island"
-                print(
-                    f"      {member}: classified as island per largest "
-                    f"sub-polygon (whole-country class was continental)"
-                )
+    a_class = effective_class(member, member_geom_ee, precomputes)
+    if a_class != whole_class:
+        print(
+            f"      {member}: classified as {a_class} per largest "
+            f"sub-polygon (whole-country class was {whole_class})"
+        )
     a_area_km2 = _polygon_area_km2_ee(member_geom_ee)
 
     candidates: set[str] = set(ext.explicit_neighbors or [])
