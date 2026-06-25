@@ -31,6 +31,7 @@ from collections import Counter
 from typing import Optional
 
 import geopandas as gpd
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
@@ -41,6 +42,58 @@ NE_SHP = "data/ne/ne_10m_admin_0_countries.shp"
 UNPRINTED_COLOR = "#dddddd"
 UNQUEUED_COLOR = "#f5f5f5"
 EDGE_COLOR = "#888888"
+UNRESOLVED_COLOR = "#ff00ff"  # magenta sentinel for legend swatches we
+                              # couldn't resolve — visible, won't get mistaken
+                              # for a real filament colour.
+
+# Filament / hobby colour names that are in neither CSS4 nor XKCD survey.
+# Extend as needed. Keys are lower-case; matched after the XKCD fall-back.
+EXTRA_COLOR_NAMES: dict[str, str] = {
+    "matte black":  "#0a0a0a",
+    "pearl white":  "#eae0c8",
+    "rose gold":    "#b76e79",
+    "silk silver":  "#c0c0c0",
+    "silk gold":    "#d4af37",
+    "silk copper":  "#b87333",
+    "glow blue":    "#7df9ff",
+    "glow green":   "#39ff14",
+    "marble":       "#f2f2f2",
+}
+
+
+def resolve_color(value) -> Optional[str]:
+    """Resolve a user-supplied colour string to a matplotlib-paintable hex.
+
+    Tries, in order:
+      1. Direct (hex like ``"#89cff0"`` or CSS4 like ``"skyblue"``).
+      2. XKCD survey under the ``xkcd:`` prefix — 953 names including
+         ``"baby blue"``, ``"forest green"``, ``"burnt orange"``, etc.
+      3. The curated ``EXTRA_COLOR_NAMES`` table above for filament-specific
+         names XKCD lacks (``"rose gold"``, ``"matte black"``, ...).
+    Returns a hex string on success, ``None`` if the value can't be parsed.
+    Whitespace and case are normalised before the XKCD / table lookups.
+    """
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    # 1. Direct (hex / CSS4 / matplotlib-native). matplotlib raises ValueError
+    # for unknown names; everything we accept normalises through to_hex.
+    try:
+        return mcolors.to_hex(s)
+    except (ValueError, TypeError):
+        pass
+    lower = s.lower()
+    # 2. XKCD survey palette
+    try:
+        return mcolors.to_hex(f"xkcd:{lower}")
+    except (ValueError, TypeError):
+        pass
+    # 3. Curated filament table
+    if lower in EXTRA_COLOR_NAMES:
+        return EXTRA_COLOR_NAMES[lower]
+    return None
 
 
 def all_printable_members() -> list[str]:
@@ -109,17 +162,32 @@ def cmd_map() -> int:
         for n in missing_in_ne:
             print(f"  {n!r}")
 
+    unresolved: dict[str, list[str]] = {}
+
     def cell_color(admin: str) -> str:
         entry = status.get(admin)
         if isinstance(entry, dict):
             entry = entry.get("color")
         if entry:
-            return entry
+            resolved = resolve_color(entry)
+            if resolved is not None:
+                return resolved
+            unresolved.setdefault(entry, []).append(admin)
+            return UNRESOLVED_COLOR
         if admin in queued:
             return UNPRINTED_COLOR
         return UNQUEUED_COLOR
 
     ne["_color"] = [cell_color(a) for a in ne["ADMIN"]]
+
+    if unresolved:
+        print("WARNING: unresolvable colour values "
+              "(rendered as magenta sentinel):")
+        for raw, admins in sorted(unresolved.items()):
+            print(f"  {raw!r}: {', '.join(admins)}")
+        print("  Try a CSS name, an XKCD name (rendered without the "
+              "'xkcd:' prefix — 'baby blue', 'forest green', etc.), or "
+              "add an entry to EXTRA_COLOR_NAMES in print_status.py.")
 
     fig, ax = plt.subplots(figsize=(22, 12))
     ne.plot(ax=ax, color=ne["_color"], edgecolor=EDGE_COLOR, linewidth=0.3)
@@ -139,9 +207,12 @@ def cmd_map() -> int:
     ax.set_aspect("equal")
 
     # Legend: one swatch per colour-in-use, plus the two reference shades.
+    # Swatch fill is the resolved hex; label keeps the original string so
+    # the legend reads as the user typed it.
     handles = []
     for color, n in color_counts.most_common():
-        handles.append(Patch(facecolor=color, edgecolor="#222222",
+        swatch = resolve_color(color) or UNRESOLVED_COLOR
+        handles.append(Patch(facecolor=swatch, edgecolor="#222222",
                              label=f"{color}  ({n})"))
     handles.append(Patch(facecolor=UNPRINTED_COLOR, edgecolor=EDGE_COLOR,
                          label=f"queued, not yet printed  "
