@@ -240,6 +240,30 @@ def cmd_map() -> int:
 # Suggestion: pick countries to print in a given new colour.
 # ---------------------------------------------------------------------------
 
+def _members_with_stl() -> set[str]:
+    """NE ADMIN names that have at least one ``.stl`` file on disk.
+
+    A member is considered printable when
+    ``STLs/<group_name>/*/<member_with_underscores>_*.stl`` glob-matches
+    something. The trailing ``_`` ensures we only match exact-name files
+    (Albania_solid.stl ✓; Algeria_*.stl wouldn't accidentally match
+    Albania_*). Both un-split (``_solid.stl`` / ``_starup.stl``) and
+    dovetail-split variants (``Australia_south_west_south_west.stl``)
+    qualify — anything printable counts.
+    """
+    import glob
+    seen: set[str] = set()
+    for group_name, g in GROUPS.items():
+        group_dir = os.path.join("STLs", group_name)
+        if not os.path.isdir(group_dir):
+            continue
+        for member in g.members:
+            member_us = member.replace(" ", "_")
+            if glob.glob(os.path.join(group_dir, "*", f"{member_us}_*.stl")):
+                seen.add(member)
+    return seen
+
+
 def _load_ne_ee():
     return gpd.read_file(NE_SHP).to_crs("EPSG:8857")
 
@@ -296,15 +320,24 @@ def _delta_e(hex_a: str, hex_b: str) -> float:
 
 
 def cmd_suggest(color_str: str, n: int, render_map: bool,
-                geo_scale_km: float, de_threshold: float) -> int:
+                geo_scale_km: float, de_threshold: float,
+                include_unbuilt: bool) -> int:
     """Suggest ``n`` queued-unprinted countries to print in ``color_str``.
 
     Greedy: each pick minimises a penalty composed of (a) proximity to
     already-printed countries weighted by colour similarity, and
     (b) proximity to suggestions already chosen this run. The colour-
     similarity weight is ``max(0, 1 - ΔE/de_threshold)`` so anything
-    ΔE>de_threshold contributes nothing. Geographic proximity uses an
-    exp(-d/scale) kernel in Equal Earth metres.
+    ΔE>de_threshold contributes nothing. Geographic distance is
+    great-circle haversine, not planar Equal Earth metres.
+
+    Only countries that have at least one ``.stl`` on disk are
+    candidates by default — small islands and below-resolution
+    countries that fail "No faces built from DEM" (Andorra, Cook
+    Islands, Luxembourg, Niue, Samoa, Sint Maarten, Tonga, ...) and
+    countries that fail manifold cleanup (Canada) silently get
+    skipped. Pass ``--include-unbuilt`` to override and treat the
+    whole queue as printable.
     """
     import numpy as np
 
@@ -319,10 +352,18 @@ def cmd_suggest(color_str: str, n: int, render_map: bool,
     centroids = _country_centroids(ne_ee)
     lonlat = _country_lonlat(ne_ee)
 
+    if include_unbuilt:
+        printable = queued
+        skipped_unbuilt: list[str] = []
+    else:
+        with_stl = _members_with_stl()
+        printable = queued & with_stl
+        skipped_unbuilt = sorted(queued - with_stl)
+
     # Sort for determinism — set iteration is hash-based and would make
     # tied scores resolve to whichever-came-first nondeterministically.
     candidates = []
-    for name in sorted(queued):
+    for name in sorted(printable):
         if name not in centroids:
             continue
         entry = status.get(name)
@@ -351,6 +392,10 @@ def cmd_suggest(color_str: str, n: int, render_map: bool,
 
     print(f"Target colour: {color_str!r} → {target_hex}")
     print(f"  Queued-unprinted candidates: {len(candidates)}")
+    if skipped_unbuilt:
+        print(f"  Excluded (no STL on disk):   {len(skipped_unbuilt)}  "
+              f"(e.g. {', '.join(skipped_unbuilt[:6])}"
+              f"{', ...' if len(skipped_unbuilt) > 6 else ''})")
     print(f"  Already-printed countries:   {len(printed)}")
     similar = sorted([p for p in printed if p["sim"] > 0],
                      key=lambda x: x["delta_e"])
@@ -544,6 +589,12 @@ def main() -> int:
                          "pairs (yellow vs light yellow ΔE~33) without "
                          "flagging clearly distinct pairs (navy vs blue "
                          "ΔE~57).")
+    ap.add_argument("--include-unbuilt", action="store_true",
+                    help="With --suggest, also consider queued countries "
+                         "that have no STL on disk. By default these are "
+                         "filtered out — small islands / below-resolution "
+                         "countries that fail the build (Andorra, Niue, "
+                         "Luxembourg, Tonga, ...) shouldn't be suggested.")
     args = ap.parse_args()
     if not (args.init or args.map or args.suggest):
         ap.print_help()
@@ -558,7 +609,8 @@ def main() -> int:
             return rc
     if args.suggest:
         return cmd_suggest(args.suggest, args.n, args.suggest_map,
-                           args.geo_scale_km, args.de_threshold)
+                           args.geo_scale_km, args.de_threshold,
+                           args.include_unbuilt)
     return 0
 
 
