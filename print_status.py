@@ -236,6 +236,284 @@ def cmd_map() -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Suggestion: pick countries to print in a given new colour.
+# ---------------------------------------------------------------------------
+
+def _load_ne_ee():
+    return gpd.read_file(NE_SHP).to_crs("EPSG:8857")
+
+
+def _country_centroids(ne_ee):
+    """ADMIN → shapely Point (Equal Earth metres). Stable across calls."""
+    return {row["ADMIN"]: row.geometry.centroid for _, row in ne_ee.iterrows()}
+
+
+def _country_lonlat(ne_ee):
+    """ADMIN → (lon, lat) tuple in WGS84 degrees. Used for great-circle
+    distance calculations; planar EE distance distorts severely near
+    the map edges (Tonga↔NZ would read as half the Earth's
+    circumference even though they're ~2,300 km apart)."""
+    import pyproj
+    tf = pyproj.Transformer.from_crs("EPSG:8857", "EPSG:4326", always_xy=True)
+    out = {}
+    for name, row in zip(ne_ee["ADMIN"], ne_ee.geometry):
+        c = row.centroid
+        lon, lat = tf.transform(c.x, c.y)
+        out[name] = (lon, lat)
+    return out
+
+
+def _great_circle_m(lonlat_a, lonlat_b) -> float:
+    """Haversine geodesic distance in metres. WGS84 mean radius."""
+    import math
+    lon1, lat1 = lonlat_a
+    lon2, lat2 = lonlat_b
+    R = 6371008.8
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = (math.sin(dphi / 2) ** 2
+         + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2)
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def _hex_to_lab(hex_str):
+    """RGB hex → CIE LAB. Reused for ΔE76 distance below."""
+    import numpy as np
+    from skimage import color as skcolor
+    rgb = mcolors.to_rgb(hex_str)
+    return skcolor.rgb2lab(np.array([[rgb]]))[0, 0]
+
+
+def _delta_e(hex_a: str, hex_b: str) -> float:
+    """CIE ΔE76 in LAB space. ~0 identical, ~30 noticeably different,
+    >50 obviously different. Used to gate "too-similar-to-existing"."""
+    import numpy as np
+    a, b = _hex_to_lab(hex_a), _hex_to_lab(hex_b)
+    return float(np.sqrt(np.sum((a - b) ** 2)))
+
+
+def cmd_suggest(color_str: str, n: int, render_map: bool,
+                geo_scale_km: float, de_threshold: float) -> int:
+    """Suggest ``n`` queued-unprinted countries to print in ``color_str``.
+
+    Greedy: each pick minimises a penalty composed of (a) proximity to
+    already-printed countries weighted by colour similarity, and
+    (b) proximity to suggestions already chosen this run. The colour-
+    similarity weight is ``max(0, 1 - ΔE/de_threshold)`` so anything
+    ΔE>de_threshold contributes nothing. Geographic proximity uses an
+    exp(-d/scale) kernel in Equal Earth metres.
+    """
+    import numpy as np
+
+    target_hex = resolve_color(color_str)
+    if target_hex is None:
+        print(f"Cannot resolve target colour {color_str!r}.")
+        return 1
+
+    status = load_status()
+    queued = set(all_printable_members())
+    ne_ee = _load_ne_ee()
+    centroids = _country_centroids(ne_ee)
+    lonlat = _country_lonlat(ne_ee)
+
+    # Sort for determinism — set iteration is hash-based and would make
+    # tied scores resolve to whichever-came-first nondeterministically.
+    candidates = []
+    for name in sorted(queued):
+        if name not in centroids:
+            continue
+        entry = status.get(name)
+        cur = entry.get("color") if isinstance(entry, dict) else entry
+        if cur:
+            continue
+        candidates.append(name)
+
+    printed = []
+    for name, entry in status.items():
+        if name not in centroids:
+            continue
+        cur = entry.get("color") if isinstance(entry, dict) else entry
+        if not cur:
+            continue
+        resolved = resolve_color(cur)
+        if resolved is None:
+            continue
+        de = _delta_e(target_hex, resolved)
+        sim = max(0.0, 1.0 - de / de_threshold)
+        printed.append({
+            "name": name, "colour": cur, "hex": resolved,
+            "centroid": centroids[name], "lonlat": lonlat[name],
+            "sim": sim, "delta_e": de,
+        })
+
+    print(f"Target colour: {color_str!r} → {target_hex}")
+    print(f"  Queued-unprinted candidates: {len(candidates)}")
+    print(f"  Already-printed countries:   {len(printed)}")
+    similar = sorted([p for p in printed if p["sim"] > 0],
+                     key=lambda x: x["delta_e"])
+    if similar:
+        print(f"  Already-printed in similar colours (ΔE<{de_threshold:.0f}):")
+        for p in similar[:8]:
+            print(f"    {p['name']:30s} {p['colour']!r:18s} "
+                  f"ΔE={p['delta_e']:5.1f}  sim={p['sim']:.2f}")
+        if len(similar) > 8:
+            print(f"    ... and {len(similar) - 8} more.")
+    else:
+        print(f"  No already-printed similar colours within ΔE={de_threshold:.0f}.")
+
+    scale_m = geo_scale_km * 1000.0
+    # PRESENCE_WEIGHT is a tiebreaker: when no similar-coloured prints
+    # exist near a candidate, fall back to preferring picks that are
+    # also far from any other printed country (i.e. unexplored areas).
+    # Small relative to the main penalties so it doesn't override the
+    # colour-conflict signal when that signal is real.
+    PRESENCE_WEIGHT = 0.2
+
+    chosen = []
+    for _ in range(n):
+        best, best_score, best_breakdown = None, -1e18, None
+        chosen_names = {c["name"] for c in chosen}
+        for cn in candidates:
+            if cn in chosen_names:
+                continue
+            cll = lonlat[cn]
+            colour_penalty = 0.0
+            presence_penalty = 0.0
+            nearest_sim_name = None
+            nearest_sim_dist = float("inf")
+            for p in printed:
+                d = _great_circle_m(cll, p["lonlat"])
+                prox = float(np.exp(-d / scale_m))
+                if p["sim"] > 0:
+                    pp = p["sim"] * prox
+                    if pp > colour_penalty:
+                        colour_penalty = pp
+                    if d < nearest_sim_dist:
+                        nearest_sim_dist = d
+                        nearest_sim_name = p["name"]
+                if prox > presence_penalty:
+                    presence_penalty = prox
+            cluster_penalty = 0.0
+            nearest_pick_name = None
+            nearest_pick_dist = float("inf")
+            for c in chosen:
+                d = _great_circle_m(cll, c["lonlat"])
+                prox = float(np.exp(-d / scale_m))
+                if prox > cluster_penalty:
+                    cluster_penalty = prox
+                if d < nearest_pick_dist:
+                    nearest_pick_dist = d
+                    nearest_pick_name = c["name"]
+            score = (
+                -colour_penalty
+                - cluster_penalty
+                - PRESENCE_WEIGHT * presence_penalty
+            )
+            if score > best_score:
+                best_score = score
+                best = cn
+                best_breakdown = {
+                    "colour_penalty": colour_penalty,
+                    "cluster_penalty": cluster_penalty,
+                    "presence_penalty": presence_penalty,
+                    "nearest_sim": (nearest_sim_name, nearest_sim_dist),
+                    "nearest_pick": (nearest_pick_name, nearest_pick_dist),
+                }
+        if best is None:
+            break
+        chosen.append({
+            "name": best,
+            "centroid": centroids[best],
+            "lonlat": lonlat[best],
+            "breakdown": best_breakdown,
+        })
+
+    print(f"\nTop {len(chosen)} suggestions for {color_str!r}:")
+    for i, ch in enumerate(chosen, 1):
+        b = ch["breakdown"]
+        sim_name, sim_dist = b["nearest_sim"]
+        pick_name, pick_dist = b["nearest_pick"]
+        bits = []
+        if sim_name is not None:
+            bits.append(
+                f"nearest similar print: {sim_name} "
+                f"({sim_dist / 1000:.0f} km)"
+            )
+        else:
+            bits.append("no similar prints anywhere")
+        if pick_name is not None:
+            bits.append(
+                f"nearest pick: {pick_name} ({pick_dist / 1000:.0f} km)"
+            )
+        print(f"  {i}. {ch['name']:30s}  {'; '.join(bits)}")
+
+    if render_map:
+        _render_suggestion_map(
+            status, queued, ne_ee, target_hex, color_str, chosen,
+        )
+    return 0
+
+
+def _render_suggestion_map(status, queued, ne_ee, target_hex,
+                           color_str, suggestions):
+    """Same as cmd_map but suggestions overlay in target colour with a
+    bold red dashed border so they stand out from existing prints."""
+    fig, ax = plt.subplots(figsize=(22, 12))
+
+    suggested_names = {s["name"] for s in suggestions}
+
+    def cell_color(admin):
+        if admin in suggested_names:
+            return target_hex
+        entry = status.get(admin)
+        cur = entry.get("color") if isinstance(entry, dict) else entry
+        if cur:
+            r = resolve_color(cur)
+            return r if r is not None else UNRESOLVED_COLOR
+        if admin in queued:
+            return UNPRINTED_COLOR
+        return UNQUEUED_COLOR
+
+    ne_ee = ne_ee.copy()
+    ne_ee["_color"] = [cell_color(a) for a in ne_ee["ADMIN"]]
+    ne_ee.plot(ax=ax, color=ne_ee["_color"],
+               edgecolor=EDGE_COLOR, linewidth=0.3)
+
+    sub = ne_ee[ne_ee["ADMIN"].isin(suggested_names)]
+    if not sub.empty:
+        sub.plot(ax=ax, facecolor="none", edgecolor="#d62728",
+                 linewidth=2.0, linestyle="--")
+
+    ax.set_title(
+        f"Suggested countries for {color_str!r} ({target_hex})  "
+        f"— {len(suggestions)} picks, dashed red border",
+        fontsize=18,
+    )
+    ax.set_axis_off()
+    ax.set_aspect("equal")
+
+    handles = [
+        Patch(facecolor=target_hex, edgecolor="#d62728", linewidth=2,
+              linestyle="--", label=f"suggested  ({len(suggestions)})"),
+        Patch(facecolor=UNPRINTED_COLOR, edgecolor=EDGE_COLOR,
+              label="queued, not yet printed"),
+        Patch(facecolor=UNQUEUED_COLOR, edgecolor=EDGE_COLOR,
+              label="not in queue"),
+    ]
+    ax.legend(handles=handles, loc="lower left", fontsize=11,
+              frameon=True, framealpha=0.9)
+
+    ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    safe_color = "".join(c if c.isalnum() else "_" for c in color_str)
+    out = f"print_suggest_{safe_color}_{ts}.png"
+    plt.savefig(out, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    print(f"\nWrote {out}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -244,8 +522,30 @@ def main() -> int:
                          "registry. Existing colours are preserved.")
     ap.add_argument("--map", action="store_true",
                     help="Render a timestamped progress map.")
+    ap.add_argument("--suggest", metavar="COLOUR",
+                    help="Suggest queued-unprinted countries to print in "
+                         "COLOUR. Greedy pick that avoids placing the new "
+                         "colour near already-printed similar colours and "
+                         "spreads suggestions geographically.")
+    ap.add_argument("--n", type=int, default=5,
+                    help="Number of suggestions (default 5).")
+    ap.add_argument("--suggest-map", action="store_true",
+                    help="With --suggest, also render a map highlighting "
+                         "the picks.")
+    ap.add_argument("--geo-scale-km", type=float, default=3000.0,
+                    help="Proximity-penalty scale in km. Picks within ~scale "
+                         "of an existing similar colour or another pick get "
+                         "heavily penalised; further away barely matters. "
+                         "Default 3000 km (continent-scale separation).")
+    ap.add_argument("--de-threshold", type=float, default=40.0,
+                    help="LAB ΔE76 threshold above which an existing colour "
+                         "is considered different enough that it doesn't "
+                         "conflict. Default 40 — catches family-confusable "
+                         "pairs (yellow vs light yellow ΔE~33) without "
+                         "flagging clearly distinct pairs (navy vs blue "
+                         "ΔE~57).")
     args = ap.parse_args()
-    if not (args.init or args.map):
+    if not (args.init or args.map or args.suggest):
         ap.print_help()
         return 2
     if args.init:
@@ -253,7 +553,12 @@ def main() -> int:
         if rc:
             return rc
     if args.map:
-        return cmd_map()
+        rc = cmd_map()
+        if rc:
+            return rc
+    if args.suggest:
+        return cmd_suggest(args.suggest, args.n, args.suggest_map,
+                           args.geo_scale_km, args.de_threshold)
     return 0
 
 
