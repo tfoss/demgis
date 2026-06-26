@@ -298,6 +298,30 @@ DENMARK = CountryGroup(
 )
 
 
+TURKEY = CountryGroup(
+    name="Turkey",
+    members=["Turkey"],
+    bridges=[
+        # Anatolia (sub-poly 0, ~78.6 deg², centroid (35, 39)) ↔ Eastern
+        # Thrace (sub-poly 1, ~2.5 deg², centroid (27.3, 41.3)). Without
+        # this the Bosphorus strait leaves the European chunk as a
+        # disconnected mesh component (user report 2026-06-26). Nearest
+        # points across the Bosphorus are ~3 km apart; default 25 km
+        # corridor crosses comfortably with margin to spare on each side.
+        # 1.5 mm slab height (vs 2 mm base) reads as a low strait
+        # connector — paintable blue if you want it to look like water.
+        Bridge(
+            a_member="Turkey", b_member="Turkey",
+            a_polygon_index=0, b_polygon_index=1,
+            label="Bosphorus (Anatolia-Thrace)",
+            max_distance_km=10.0,  # tightened from default 60: catches
+                                   # ref-data drift before it pulls a
+                                   # spurious Aegean-island connection
+        ),
+    ],
+)
+
+
 TIERRA_DEL_FUEGO = CountryGroup(
     name="Tierra_del_Fuego",
     members=["Argentina", "Chile"],
@@ -459,6 +483,7 @@ MADAGASCAR = CountryGroup(
 GROUPS: dict[str, CountryGroup] = {
     "UK_Ireland":       UK_IRELAND,
     "Denmark":          DENMARK,
+    "Turkey":           TURKEY,
     "Tierra_del_Fuego": TIERRA_DEL_FUEGO,
     "Korea_Japan":      KOREA_JAPAN,
     "Sri_Lanka":        SRI_LANKA,
