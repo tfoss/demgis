@@ -43,6 +43,13 @@ services:
     environment:
       # Make matplotlib non-interactive by default in container (no display)
       MPLBACKEND: Agg
+      # Point GDAL + PROJ at the data conda already shipped — without this,
+      # every gdal/geopandas invocation prints
+      #   "ERROR 1: PROJ: proj_create_from_database: Open of /opt/conda/envs/demgis/share/proj failed"
+      # to stderr even though the directory exists and operations still work.
+      # Setting both makes the warning go away.
+      PROJ_DATA: /opt/conda/envs/demgis/share/proj
+      GDAL_DATA: /opt/conda/envs/demgis/share/gdal
     volumes:
       - .:/workspace
       # - ${DEM_DATA:-./_no_dem_data_set}:/data:ro ## hiding for now, the main dem is built, so dont need raw tiles.

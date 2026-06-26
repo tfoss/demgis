@@ -240,6 +240,51 @@ def cmd_map() -> int:
 # Suggestion: pick countries to print in a given new colour.
 # ---------------------------------------------------------------------------
 
+def _land_neighbours(ne_ee, buffer_m: float = 1000.0) -> dict[str, set[str]]:
+    """ADMIN → set of group-member ADMINs that share a land border.
+
+    A "land border" is a polygon-polygon intersection within a small
+    buffer (default 1 km) to absorb the coordinate-rounding gaps in
+    NE. Countries across the sea (Indonesia↔Australia, Cuba↔US) do
+    NOT share a land border under this rule — the buffer is too
+    small to cross open water.
+
+    Adjacency is restricted to group members only — same-island NE
+    sub-entities (Northern Cyprus, Akrotiri / Dhekelia, etc.) and
+    countries we don't print are excluded from neighbour counts so
+    Cyprus correctly reads as an island (0 land neighbours) rather
+    than "4 land neighbours" against its own sub-entities.
+
+    Computed in one STRtree pass, O(N · avg_neighbours).
+    """
+    from shapely.strtree import STRtree
+    geoms = list(ne_ee.geometry.values)
+    names = list(ne_ee["ADMIN"].values)
+    members = {m for g in GROUPS.values() for m in g.members}
+    tree = STRtree(geoms)
+    adj: dict[str, set[str]] = {n: set() for n in names if n in members}
+    for i, g in enumerate(geoms):
+        if names[i] not in members:
+            continue
+        buf = g.buffer(buffer_m)
+        hits = tree.query(buf)
+        for h in hits:
+            if hasattr(h, "geom_type"):
+                try:
+                    j = next(k for k, gg in enumerate(geoms) if gg is h)
+                except StopIteration:
+                    continue
+            else:
+                j = int(h)
+            if j == i or names[j] not in members:
+                continue
+            other = geoms[j]
+            if buf.intersects(other):
+                adj[names[i]].add(names[j])
+                adj[names[j]].add(names[i])
+    return adj
+
+
 def _members_with_stl() -> set[str]:
     """NE ADMIN names that have at least one ``.stl`` file on disk.
 
@@ -273,36 +318,6 @@ def _country_centroids(ne_ee):
     return {row["ADMIN"]: row.geometry.centroid for _, row in ne_ee.iterrows()}
 
 
-def _country_lonlat(ne_ee):
-    """ADMIN → (lon, lat) tuple in WGS84 degrees. Used for great-circle
-    distance calculations; planar EE distance distorts severely near
-    the map edges (Tonga↔NZ would read as half the Earth's
-    circumference even though they're ~2,300 km apart)."""
-    import pyproj
-    tf = pyproj.Transformer.from_crs("EPSG:8857", "EPSG:4326", always_xy=True)
-    out = {}
-    for name, row in zip(ne_ee["ADMIN"], ne_ee.geometry):
-        c = row.centroid
-        lon, lat = tf.transform(c.x, c.y)
-        out[name] = (lon, lat)
-    return out
-
-
-def _great_circle_m(lonlat_a, lonlat_b) -> float:
-    """Haversine geodesic distance in metres. WGS84 mean radius."""
-    import math
-    lon1, lat1 = lonlat_a
-    lon2, lat2 = lonlat_b
-    R = 6371008.8
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = (math.sin(dphi / 2) ** 2
-         + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2)
-    return 2 * R * math.asin(math.sqrt(a))
-
-
 def _hex_to_lab(hex_str):
     """RGB hex → CIE LAB. Reused for ΔE76 distance below."""
     import numpy as np
@@ -319,28 +334,56 @@ def _delta_e(hex_a: str, hex_b: str) -> float:
     return float(np.sqrt(np.sum((a - b) ** 2)))
 
 
+def _bfs_hops(adj, source, max_hops=3) -> dict[str, int]:
+    """BFS from ``source`` through the land-adjacency graph; returns
+    ``{name: hop_count}`` for everything reachable within ``max_hops``.
+    Islands (no neighbours) yield ``{source: 0}`` only."""
+    dist = {source: 0}
+    frontier = [source]
+    for h in range(max_hops):
+        nxt = []
+        for n in frontier:
+            for nb in adj.get(n, ()):
+                if nb not in dist:
+                    dist[nb] = h + 1
+                    nxt.append(nb)
+        frontier = nxt
+        if not frontier:
+            break
+    return dist
+
+
 def cmd_suggest(color_str: str, n: int, render_map: bool,
-                geo_scale_km: float, de_threshold: float,
-                include_unbuilt: bool) -> int:
+                de_threshold: float, include_unbuilt: bool) -> int:
     """Suggest ``n`` queued-unprinted countries to print in ``color_str``.
 
-    Greedy: each pick minimises a penalty composed of (a) proximity to
-    already-printed countries weighted by colour similarity, and
-    (b) proximity to suggestions already chosen this run. The colour-
-    similarity weight is ``max(0, 1 - ΔE/de_threshold)`` so anything
-    ΔE>de_threshold contributes nothing. Geographic distance is
-    great-circle haversine, not planar Equal Earth metres.
+    Greedy pick over candidates using a **land-adjacency** penalty —
+    not great-circle distance. The four-colour-map intuition: what
+    matters is "how many countries separate you from a similar
+    colour", not "how many km". Two countries 2,000 km apart but
+    on different continents are colour-independent; two countries
+    100 km apart sharing a land border are not.
 
-    Only countries that have at least one ``.stl`` on disk are
-    candidates by default — small islands and below-resolution
-    countries that fail "No faces built from DEM" (Andorra, Cook
-    Islands, Luxembourg, Niue, Samoa, Sint Maarten, Tonga, ...) and
-    countries that fail manifold cleanup (Canada) silently get
-    skipped. Pass ``--include-unbuilt`` to override and treat the
-    whole queue as printable.
+    Per-candidate score = -COLOR_W·colour_conflict
+                          -CLUSTER_W·cluster_conflict
+                          +CONT_W·continental_bonus
+                          +SPREAD_W·spread_bonus
+
+    * ``colour_conflict`` sums sim×hop_weight over already-printed
+      similar-coloured countries within 2 hops (HOPS={1:1.0, 2:0.3}).
+    * ``cluster_conflict`` sums hop_weight over already-chosen picks.
+    * ``continental_bonus`` rewards "informative" picks — countries
+      with land neighbours (saturates at 4). Islands score 0 here,
+      so when continentals are conflict-free they win.
+    * ``spread_bonus`` mild preference for being many hops from any
+      pick — tiebreaker for spread within a continent.
+
+    Defaults: COLOR_W=10 (similar-coloured neighbour is near-veto),
+    CLUSTER_W=5 (don't suggest adjacent picks), CONT_W=1, SPREAD_W=0.5.
+
+    Only countries with at least one ``.stl`` on disk are candidates
+    by default (use ``--include-unbuilt`` to override).
     """
-    import numpy as np
-
     target_hex = resolve_color(color_str)
     if target_hex is None:
         print(f"Cannot resolve target colour {color_str!r}.")
@@ -350,7 +393,6 @@ def cmd_suggest(color_str: str, n: int, render_map: bool,
     queued = set(all_printable_members())
     ne_ee = _load_ne_ee()
     centroids = _country_centroids(ne_ee)
-    lonlat = _country_lonlat(ne_ee)
 
     if include_unbuilt:
         printable = queued
@@ -360,8 +402,13 @@ def cmd_suggest(color_str: str, n: int, render_map: bool,
         printable = queued & with_stl
         skipped_unbuilt = sorted(queued - with_stl)
 
-    # Sort for determinism — set iteration is hash-based and would make
-    # tied scores resolve to whichever-came-first nondeterministically.
+    print("Building land-adjacency graph...")
+    adj = _land_neighbours(ne_ee)
+    n_edges = sum(len(v) for v in adj.values()) // 2
+    print(f"  {len(adj)} countries, {n_edges} land borders")
+
+    continents = dict(zip(ne_ee["ADMIN"], ne_ee["CONTINENT"]))
+
     candidates = []
     for name in sorted(printable):
         if name not in centroids:
@@ -386,11 +433,10 @@ def cmd_suggest(color_str: str, n: int, render_map: bool,
         sim = max(0.0, 1.0 - de / de_threshold)
         printed.append({
             "name": name, "colour": cur, "hex": resolved,
-            "centroid": centroids[name], "lonlat": lonlat[name],
             "sim": sim, "delta_e": de,
         })
 
-    print(f"Target colour: {color_str!r} → {target_hex}")
+    print(f"\nTarget colour: {color_str!r} → {target_hex}")
     print(f"  Queued-unprinted candidates: {len(candidates)}")
     if skipped_unbuilt:
         print(f"  Excluded (no STL on disk):   {len(skipped_unbuilt)}  "
@@ -409,91 +455,143 @@ def cmd_suggest(color_str: str, n: int, render_map: bool,
     else:
         print(f"  No already-printed similar colours within ΔE={de_threshold:.0f}.")
 
-    scale_m = geo_scale_km * 1000.0
-    # PRESENCE_WEIGHT is a tiebreaker: when no similar-coloured prints
-    # exist near a candidate, fall back to preferring picks that are
-    # also far from any other printed country (i.e. unexplored areas).
-    # Small relative to the main penalties so it doesn't override the
-    # colour-conflict signal when that signal is real.
-    PRESENCE_WEIGHT = 0.2
+    HOP_W = {1: 1.0, 2: 0.3}
+    COLOR_W = 10.0
+    CLUSTER_W = 5.0
+    CONT_W = 2.0          # strong: explicit "islands are easier" pressure
+    DIVERSITY_W = 5.0     # prefer unexplored continents over repeats
+    MAX_NEIGHBOURS_BONUS = 4
+    # NE's "Seven seas (open ocean)" bucket is for oceanic territories
+    # without a continental home (Mauritius, French Polynesia, ...).
+    # Treating it as a unique continent gives islands a free diversity
+    # bonus; merge it into None so the diversity term ignores it.
+    BAD_CONTINENTS = {"Seven seas (open ocean)", "Antarctica"}
+
+    def cont_for(name):
+        c = continents.get(name)
+        if c in BAD_CONTINENTS or c is None:
+            return None
+        return c
+
+    sim_printed = [p for p in printed if p["sim"] > 0]
+    # Continent-diversity term: penalises picks in continents where this
+    # colour is already represented (across both previously-printed
+    # similar-coloured countries and picks-so-far in this run).
+    sim_cont_count = Counter(
+        cont_for(p["name"]) for p in sim_printed if cont_for(p["name"])
+    )
 
     chosen = []
     for _ in range(n):
         best, best_score, best_breakdown = None, -1e18, None
         chosen_names = {c["name"] for c in chosen}
+        chosen_cont_count = Counter(
+            cont_for(c["name"]) for c in chosen if cont_for(c["name"])
+        )
         for cn in candidates:
             if cn in chosen_names:
                 continue
-            cll = lonlat[cn]
-            colour_penalty = 0.0
-            presence_penalty = 0.0
-            nearest_sim_name = None
-            nearest_sim_dist = float("inf")
-            for p in printed:
-                d = _great_circle_m(cll, p["lonlat"])
-                prox = float(np.exp(-d / scale_m))
-                if p["sim"] > 0:
-                    pp = p["sim"] * prox
-                    if pp > colour_penalty:
-                        colour_penalty = pp
-                    if d < nearest_sim_dist:
-                        nearest_sim_dist = d
-                        nearest_sim_name = p["name"]
-                if prox > presence_penalty:
-                    presence_penalty = prox
-            cluster_penalty = 0.0
-            nearest_pick_name = None
-            nearest_pick_dist = float("inf")
-            for c in chosen:
-                d = _great_circle_m(cll, c["lonlat"])
-                prox = float(np.exp(-d / scale_m))
-                if prox > cluster_penalty:
-                    cluster_penalty = prox
-                if d < nearest_pick_dist:
-                    nearest_pick_dist = d
-                    nearest_pick_name = c["name"]
+            hops = _bfs_hops(adj, cn, max_hops=3)
+            colour_conflict = 0.0
+            conflict_breakdown = []  # (printed_name, hop_dist, sim)
+            for p in sim_printed:
+                h = hops.get(p["name"])
+                if h is None or h == 0:
+                    continue
+                w = HOP_W.get(h, 0.0)
+                if w == 0.0:
+                    continue
+                colour_conflict += p["sim"] * w
+                conflict_breakdown.append((p["name"], h, p["sim"]))
+            cluster_conflict = 0.0
+            cluster_breakdown = []
+            for ch in chosen:
+                h = hops.get(ch["name"])
+                if h is None or h == 0:
+                    continue
+                w = HOP_W.get(h, 0.0)
+                if w == 0.0:
+                    continue
+                cluster_conflict += w
+                cluster_breakdown.append((ch["name"], h))
+            n_neighbours = len(adj.get(cn, ()))
+            # Continental pressure — islands get a real penalty so they
+            # only emerge when continentals run out. Two-step ramp:
+            #   0 neighbours (true island)  → -1.0
+            #   1 neighbour  (one-border)   →  0.0
+            #   2+ neighbours               → +1.0
+            if n_neighbours == 0:
+                cont_bonus = -1.0
+            elif n_neighbours == 1:
+                cont_bonus = 0.0
+            else:
+                cont_bonus = min(n_neighbours, MAX_NEIGHBOURS_BONUS) / MAX_NEIGHBOURS_BONUS
+            cand_cont = cont_for(cn)
+            # 1.0 if this continent has no similar-coloured representation
+            # yet (printed or just-chosen); 0.5 with one rep; 0.33 with two;
+            # etc. None-continent (oceanic territories) gets no diversity
+            # bonus at all — falls back to whatever the colour / cont
+            # signals say.
+            if cand_cont is None:
+                diversity_bonus = 0.0
+                existing_in_continent = 0
+            else:
+                existing_in_continent = (
+                    sim_cont_count.get(cand_cont, 0)
+                    + chosen_cont_count.get(cand_cont, 0)
+                )
+                diversity_bonus = 1.0 / (1 + existing_in_continent)
             score = (
-                -colour_penalty
-                - cluster_penalty
-                - PRESENCE_WEIGHT * presence_penalty
+                -COLOR_W * colour_conflict
+                -CLUSTER_W * cluster_conflict
+                +CONT_W * cont_bonus
+                +DIVERSITY_W * diversity_bonus
             )
             if score > best_score:
                 best_score = score
                 best = cn
                 best_breakdown = {
-                    "colour_penalty": colour_penalty,
-                    "cluster_penalty": cluster_penalty,
-                    "presence_penalty": presence_penalty,
-                    "nearest_sim": (nearest_sim_name, nearest_sim_dist),
-                    "nearest_pick": (nearest_pick_name, nearest_pick_dist),
+                    "continent": cand_cont if cand_cont else "(oceanic)",
+                    "n_neighbours": n_neighbours,
+                    "colour_conflict": colour_conflict,
+                    "cluster_conflict": cluster_conflict,
+                    "cont_bonus": cont_bonus,
+                    "diversity_bonus": diversity_bonus,
+                    "existing_in_continent": existing_in_continent,
+                    "conflicts": conflict_breakdown,
+                    "cluster": cluster_breakdown,
                 }
         if best is None:
             break
         chosen.append({
             "name": best,
             "centroid": centroids[best],
-            "lonlat": lonlat[best],
             "breakdown": best_breakdown,
         })
 
     print(f"\nTop {len(chosen)} suggestions for {color_str!r}:")
     for i, ch in enumerate(chosen, 1):
         b = ch["breakdown"]
-        sim_name, sim_dist = b["nearest_sim"]
-        pick_name, pick_dist = b["nearest_pick"]
-        bits = []
-        if sim_name is not None:
-            bits.append(
-                f"nearest similar print: {sim_name} "
-                f"({sim_dist / 1000:.0f} km)"
+        bits = [
+            f"{b['continent']}",
+            f"{b['n_neighbours']} land neighbours",
+        ]
+        if b["conflicts"]:
+            cf = ", ".join(
+                f"{p}({h}-hop)" for p, h, _ in
+                sorted(b["conflicts"], key=lambda x: (x[1], x[0]))[:3]
             )
+            bits.append(f"colour conflicts: {cf}")
         else:
-            bits.append("no similar prints anywhere")
-        if pick_name is not None:
+            bits.append("no similar colour within 2 hops")
+        if b["cluster"]:
+            cc = ", ".join(f"{p}({h}-hop)" for p, h in b["cluster"])
+            bits.append(f"adjacent picks: {cc}")
+        if b["existing_in_continent"] > 0:
             bits.append(
-                f"nearest pick: {pick_name} ({pick_dist / 1000:.0f} km)"
+                f"{b['existing_in_continent']} similar already in continent"
             )
-        print(f"  {i}. {ch['name']:30s}  {'; '.join(bits)}")
+        print(f"  {i}. {ch['name']:30s}  " + "; ".join(bits))
 
     if render_map:
         _render_suggestion_map(
@@ -577,11 +675,6 @@ def main() -> int:
     ap.add_argument("--suggest-map", action="store_true",
                     help="With --suggest, also render a map highlighting "
                          "the picks.")
-    ap.add_argument("--geo-scale-km", type=float, default=3000.0,
-                    help="Proximity-penalty scale in km. Picks within ~scale "
-                         "of an existing similar colour or another pick get "
-                         "heavily penalised; further away barely matters. "
-                         "Default 3000 km (continent-scale separation).")
     ap.add_argument("--de-threshold", type=float, default=40.0,
                     help="LAB ΔE76 threshold above which an existing colour "
                          "is considered different enough that it doesn't "
@@ -609,8 +702,7 @@ def main() -> int:
             return rc
     if args.suggest:
         return cmd_suggest(args.suggest, args.n, args.suggest_map,
-                           args.geo_scale_km, args.de_threshold,
-                           args.include_unbuilt)
+                           args.de_threshold, args.include_unbuilt)
     return 0
 
 
