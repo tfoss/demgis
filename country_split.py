@@ -442,29 +442,74 @@ def _fit_decision(long_mm: float, short_mm: float,
     return fits_x or fits_y
 
 
+def _best_fit_rotation(
+    polygon: Polygon,
+    usable_x: float,
+    usable_y: float,
+    sweep_step_deg: float = 1.0,
+) -> tuple[float, float, float, bool]:
+    """Sweep rotations to find one where the axis-aligned bbox fits in
+    ``usable_x × usable_y`` (either orientation). Returns
+    ``(theta, W, H, fits)``.
+
+    The right question for "does the STL fit?" is "is there ANY
+    rotation that fits?" — not "what rotation minimises max(W, H)".
+    Those disagree for non-square beds: a 215×100 slab fits 160×220
+    at θ=0° (215≤220, 100≤160) but at θ=135° the bbox becomes
+    212×212 — smaller *max* dim but doesn't fit the 160 constraint.
+
+    The minimum-area rotated rectangle is misleading for a different
+    reason: it minimises area, not max dim. For Peru, MRR=240×110
+    fails 220, but at θ≈24° the bbox is 186×186 which fits 220 with
+    margin.
+
+    On finding a fitting rotation, returns immediately. If no fitting
+    rotation exists in the sweep, returns the rotation with smallest
+    ``max(W, H)`` (purely for reporting).
+    """
+    from shapely.affinity import rotate as shp_rotate
+    if polygon.is_empty:
+        return 0.0, 0.0, 0.0, True
+    fallback_theta, fallback_w, fallback_h = 0.0, 0.0, 0.0
+    fallback_max = float("inf")
+    theta = 0.0
+    while theta < 180.0:
+        r = shp_rotate(polygon, theta, origin="centroid")
+        minx, miny, maxx, maxy = r.bounds
+        w, h = maxx - minx, maxy - miny
+        if _fit_decision(max(w, h), min(w, h), usable_x, usable_y):
+            return theta, w, h, True
+        if max(w, h) < fallback_max:
+            fallback_max = max(w, h)
+            fallback_theta = theta
+            fallback_w, fallback_h = w, h
+        theta += sweep_step_deg
+    return fallback_theta, fallback_w, fallback_h, False
+
+
 def needs_dovetail_split(
     mesh: trimesh.Trimesh,
     bed_mm: float = DEFAULT_BED_MM,
     prime_tower_mm: float = DEFAULT_PRIME_TOWER_MM,
 ) -> bool:
-    """True iff the mesh's largest-component MRR does NOT fit
-    ``(bed_mm - prime_tower_mm) × bed_mm`` in either orientation.
+    """True iff there's NO rotation at which the mesh's largest-component
+    footprint fits ``(bed_mm - prime_tower_mm) × bed_mm``.
 
     Uses the largest component only (so trailing outlying islands don't
-    inflate the footprint). Matches the decision logic in
-    ``bin/analyze_fit.fit_decision``.
+    inflate the footprint). Internally sweeps rotations to find the
+    orientation minimising max(W, H) — see ``_best_fit_rotation`` for
+    why the MRR alone isn't the right metric.
     """
-    # Use only the largest component for the MRR.
     comps = mesh.split(only_watertight=False)
     if comps and len(comps) > 1:
         m = max(comps, key=lambda c: len(c.faces))
     else:
         m = mesh
     fp = _stl_footprint_polygon(m)
-    long_side, short_side, _ = _min_rotated_rectangle_dims(fp)
     usable_x = bed_mm - prime_tower_mm
     usable_y = bed_mm
-    return not _fit_decision(long_side, short_side, usable_x, usable_y)
+    _theta, _w, _h, fits = _best_fit_rotation(fp, usable_x, usable_y)
+    return not fits
 
 
 # ---------------------------------------------------------------------------
