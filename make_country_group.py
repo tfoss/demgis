@@ -1489,24 +1489,26 @@ def main():
     # 4b. Bambu 3MF wrap per sub-piece. Each STL gets a sibling .3mf
     #     with per-triangle filament assignments encoded via Bambu's
     #     ``paint_color`` attribute. Tile-type rule:
-    #     * member's orchestrator-output ``ocean_extensions_ee`` is
-    #       non-empty → ``country_ocean`` (ocean blue band at z ≤ 1.98
-    #       plus the 7 country bands).
-    #     * otherwise → ``country`` (the 7 country bands; no blue).
-    #     Note: a group config can DECLARE ``ocean_extensions`` for a
-    #     member but still get an empty actual extension (landlocked
-    #     members, all candidates obstructed, etc.). In that case the
-    #     mesh has no bridge-lowered region, so the country_ocean
-    #     blue band would paint the base bottom + side walls of a
-    #     pure-land country. We key off the ACTUAL extension geometry
-    #     instead of the declared config to avoid this.
+    #     * member has any *low-z region* in its mesh — bridges OR
+    #       non-empty ocean extension — → ``country_ocean`` (adds the
+    #       blue band at z ≤ 1.98 mm on top of the 7 country bands).
+    #     * otherwise → ``country`` (7 country bands; no blue).
+    #     ``bridge_polys_crs_by_member`` carries both bridge polygons
+    #     (compute_bridges) AND ocean-extension polygons (the loop
+    #     above), so its truthiness is the right key here. Crucially,
+    #     a group can DECLARE ``ocean_extensions`` for a member but
+    #     still get an empty actual extension (landlocked, continental
+    #     gated off, all candidates obstructed, ...); those don't
+    #     append, so we don't spuriously trigger country_ocean for
+    #     a pure-land mesh.
+    #     Denmark / Turkey precedent: bridges alone produce z = 1.5 mm
+    #     regions that need the blue band to read as water.
     if not args.no_3mf:
         from paint_elevation_3mf import paint_and_save
         print(f"\nWrapping pieces as Bambu 3MF...")
         for member, pieces in split_pieces_by_member.items():
-            has_ocean = bool(ocean_extensions_ee.get(member)) and \
-                not ocean_extensions_ee[member].is_empty
-            tile_type = "country_ocean" if has_ocean else "country"
+            has_low_z = bool(bridge_polys_crs_by_member.get(member))
+            tile_type = "country_ocean" if has_low_z else "country"
             for piece in pieces:
                 stl_path = piece["stl"]
                 if not os.path.exists(stl_path):
