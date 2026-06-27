@@ -60,7 +60,11 @@ from shapely.geometry import MultiPoint, Polygon
 # Bed-fit constants (default Bambu setup)
 # ---------------------------------------------------------------------------
 
-DEFAULT_BED_MM = 220.0
+DEFAULT_BED_MM = 256.0  # Bambu P1S / X1C build plate (user's printer).
+                        # Was 220 (A1 / Mini) — Peru's 240×110 MRR and
+                        # other 220-marginal countries (Algeria, ...) were
+                        # being dovetail-split unnecessarily. Tests pin the
+                        # 220 fit/no-fit decisions explicitly.
 DEFAULT_PRIME_TOWER_MM = 60.0
 
 # Below this area, an "outlying component" is almost certainly a mesh-
