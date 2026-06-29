@@ -1049,6 +1049,7 @@ def process_country(
     save_png=False,
     bridge_polys_crs=None,
     bridge_height_mm=1.5,
+    ocean_polys_crs=None,
 ):
     """Process a single country with vector clipping.
 
@@ -1058,6 +1059,16 @@ def process_country(
     BASE_THICKNESS_MM) after the vector clip. `country_geom` must already be
     the merged (islands + attachment-zones + bridges) geometry; the driver is
     responsible for constructing it.
+
+    Optional ocean extensions: pass `ocean_polys_crs` for large halo /
+    sector polygons that should be LOWERED to `bridge_height_mm` but NOT
+    DEM-marked at -200m. The marking step is too aggressive for big ocean
+    polygons surrounding small islands — the Gaussian smoothing of the
+    -200m signal bleeds across the entire country's land (Bahrain 2026-
+    06-29: 99% of the 688 km² island ended up at z=1.5 because the
+    75,974 km² ocean halo's -200m mark drowned the smoothing kernel).
+    Nodata→SEA_PADDING_M handles ocean elevation naturally; the lowering
+    step then pulls the resulting z≈1.9 surface down to z=1.5 cleanly.
     """
     print(f"\nProcessing {country_name}...")
 
@@ -1081,10 +1092,17 @@ def process_country(
     clipped_dem, transform = clip_dem_to_country(dem_src, country_geom)
     print(f"    DEM shape: {clipped_dem.shape}")
 
-    # Mark bridge zones at -200m BEFORE smoothing — they'll come out at
-    # BASE_THICKNESS_MM after solidify, then get lowered to bridge_height_mm
-    # after the vector clip below. Pattern ported from archive/scripts/
-    # reference/generate_denmark_connected.py.
+    # Mark bridge zones at -200m and ocean zones at -50m BEFORE smoothing.
+    # Both come out at z ≈ BASE_THICKNESS_MM after solidify; the lowering
+    # step then pulls them to bridge_height_mm. Bridges use -200m because
+    # the strait is genuinely deep and the polygon is narrow (smoothing
+    # bleed is contained). Oceans use -50m because they're orders of
+    # magnitude bigger than the narrow-bridge case, and -200m of
+    # smoothing-bleed across a 20 km Gaussian kernel kills small-island
+    # land (Bahrain 2026-06-29: -200m × 75 k km² halo dropped 99 % of
+    # the 688 km² island to z=1.5). -50m × bleed is bounded to ~0.1 mm
+    # which the lowering step then ignores (land stays out of the
+    # [1.8, 2.2] band when it's in the ocean polygon's bbox).
     if bridge_polys_crs:
         from rasterio.mask import geometry_mask
         print(f"  Marking {len(bridge_polys_crs)} bridge zone(s) in DEM at -200m...")
@@ -1093,6 +1111,16 @@ def process_country(
             mask = geometry_mask([bp], transform=transform, invert=True,
                                  out_shape=clipped_dem.shape)
             clipped_dem[mask] = -200.0
+            total_marked += int(mask.sum())
+        print(f"    Marked {total_marked} pixels")
+    if ocean_polys_crs:
+        from rasterio.mask import geometry_mask
+        print(f"  Marking {len(ocean_polys_crs)} ocean zone(s) in DEM at -50m...")
+        total_marked = 0
+        for op in ocean_polys_crs:
+            mask = geometry_mask([op], transform=transform, invert=True,
+                                 out_shape=clipped_dem.shape)
+            clipped_dem[mask] = -50.0
             total_marked += int(mask.sum())
         print(f"    Marked {total_marked} pixels")
 
@@ -1139,16 +1167,22 @@ def process_country(
     # extensions (Sri Lanka's 285,000 km² ocean polygon's bbox includes
     # the northern half of Sri Lanka). The fix: pre-filter by bbox for
     # speed, then exact polygon-containment on the filtered vertices.
-    if bridge_polys_crs:
+    # Combine bridges + ocean for the lowering step. Bridges are
+    # DEM-marked (above); oceans rely on nodata→SEA_PADDING_M. Both
+    # need their z≈BASE_THICKNESS_MM surface vertices pulled down.
+    polys_to_lower = list(bridge_polys_crs or []) + list(ocean_polys_crs or [])
+    if polys_to_lower:
         from rasterio.transform import xy as transform_xy
         from rasterio.transform import rowcol
         from shapely.geometry import Point
         from shapely.prepared import prep
-        print(f"  Lowering bridge vertices to {bridge_height_mm}mm...")
+        print(f"  Lowering vertices to {bridge_height_mm}mm "
+              f"({len(bridge_polys_crs or [])} bridges, "
+              f"{len(ocean_polys_crs or [])} ocean polys)...")
         vertices = solid.vertices.copy()
         total_lowered = 0
         z_band = (BASE_THICKNESS_MM - 0.2, BASE_THICKNESS_MM + 0.2)
-        for bp in bridge_polys_crs:
+        for bp in polys_to_lower:
             # Bbox pre-filter in mesh-mm — same conversion as before, cheap.
             minx, miny, maxx, maxy = bp.bounds
             row_min, col_min = rowcol(transform, minx, maxy)

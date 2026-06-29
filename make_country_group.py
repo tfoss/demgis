@@ -1284,6 +1284,7 @@ def main():
     member_proj = {m: reproject_to_dem_crs(g, dem.crs)
                    for m, g in member_wgs84.items()}
     bridge_polys_crs_by_member: dict[str, list] = {m: [] for m in group.members}
+    ocean_polys_crs_by_member: dict[str, list] = {m: [] for m in group.members}
     for bridge, bp_wgs in zip(group.bridges, bridge_polys_wgs84):
         bp_crs = reproject_to_dem_crs(bp_wgs, dem.crs)
         bridge_polys_crs_by_member.setdefault(bridge.a_member, []).append(bp_crs)
@@ -1363,15 +1364,34 @@ def main():
             print(f"    {member}: ocean extension {area_km2:,.0f} km²")
 
             # (a) merge into member's vector-clip geom (DEM-CRS).
-            merged = unary_union([member_proj[member], ocean_crs])
+            #     Use the ORIGINAL land polygon (before any merge) to
+            #     compute the ocean-only piece next.
+            land_only_crs = member_proj[member]
+            merged = unary_union([land_only_crs, ocean_crs])
             if not merged.is_valid:
                 merged = make_valid(merged)
             member_proj[member] = merged
 
-            # (b) tag for the bridge-style DEM marking + vertex lowering.
-            bridge_polys_crs_by_member.setdefault(member, []).append(
-                ocean_crs
-            )
+            # (b) tag for the LOWERING step (z=1.5) but NOT for the
+            #     DEM -200m marking. The marking is appropriate for
+            #     narrow Denmark-style bridges but catastrophic for
+            #     large ocean halos surrounding small islands —
+            #     Bahrain symptom (2026-06-29): a 75,974 km² halo
+            #     marked at -200m and smoothed with a 20 km Gaussian
+            #     bled the -200m signal across 99 % of the 688 km²
+            #     island, dropping the whole country's surface to
+            #     z=1.5. For ocean polys, nodata→SEA_PADDING_M (-50m)
+            #     gives a gentle z≈1.9 in the ocean area; the
+            #     lowering step pulls those to 1.5 cleanly without
+            #     touching the country's land. Subtract land so the
+            #     lowering polygon also excludes the country.
+            ocean_only_crs = ocean_crs.difference(land_only_crs)
+            if not ocean_only_crs.is_valid:
+                ocean_only_crs = make_valid(ocean_only_crs)
+            if not ocean_only_crs.is_empty:
+                ocean_polys_crs_by_member.setdefault(member, []).append(
+                    ocean_only_crs
+                )
 
             # (c) bead-05 QC: stash intermediates for run_all_ocean_checks.
             ocean_extensions_ee[member] = ocean_ee
@@ -1432,6 +1452,7 @@ def main():
                     out_dir, pipe.XY_STEP, pipe.TARGET_FACES,
                     extrude_star=group.extrude_star.get(member, False),
                     bridge_polys_crs=bridge_polys_crs_by_member.get(member) or None,
+                    ocean_polys_crs=ocean_polys_crs_by_member.get(member) or None,
                 )
                 if isinstance(meta, dict):
                     pipeline_meta_by_member[member] = meta
@@ -1493,21 +1514,23 @@ def main():
     #       non-empty ocean extension — → ``country_ocean`` (adds the
     #       blue band at z ≤ 1.98 mm on top of the 7 country bands).
     #     * otherwise → ``country`` (7 country bands; no blue).
-    #     ``bridge_polys_crs_by_member`` carries both bridge polygons
-    #     (compute_bridges) AND ocean-extension polygons (the loop
-    #     above), so its truthiness is the right key here. Crucially,
-    #     a group can DECLARE ``ocean_extensions`` for a member but
-    #     still get an empty actual extension (landlocked, continental
-    #     gated off, all candidates obstructed, ...); those don't
-    #     append, so we don't spuriously trigger country_ocean for
-    #     a pure-land mesh.
+    #     ``bridge_polys_crs_by_member`` carries bridge polygons
+    #     (compute_bridges); ``ocean_polys_crs_by_member`` carries
+    #     ocean-extension polygons. Either source means the mesh has
+    #     z ≈ 1.5 regions that the country_ocean blue band should
+    #     paint. Empty/obstructed ocean cases don't append, so a
+    #     pure-land mesh with config-declared but runtime-empty
+    #     ocean still correctly gets tile_type="country".
     #     Denmark / Turkey precedent: bridges alone produce z = 1.5 mm
     #     regions that need the blue band to read as water.
     if not args.no_3mf:
         from paint_elevation_3mf import paint_and_save
         print(f"\nWrapping pieces as Bambu 3MF...")
         for member, pieces in split_pieces_by_member.items():
-            has_low_z = bool(bridge_polys_crs_by_member.get(member))
+            has_low_z = (
+                bool(bridge_polys_crs_by_member.get(member))
+                or bool(ocean_polys_crs_by_member.get(member))
+            )
             tile_type = "country_ocean" if has_low_z else "country"
             for piece in pieces:
                 stl_path = piece["stl"]
