@@ -197,18 +197,42 @@ def manifold_clean(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     return cleaned
 
 
-def _keep_largest_component(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
-    """Return only the largest connected component of `mesh` by face count.
+def _keep_largest_component(
+    mesh: trimesh.Trimesh,
+    keep_above_frac: float = 0.005,
+) -> trimesh.Trimesh:
+    """Drop only manifold-clean boolean-artifact slivers from `mesh`.
 
-    Used post-dovetail-cut so the output STL is a single connected piece —
-    a cut through an archipelago can produce >2 components (one per
-    intersected island). For a country with a single mainland this is a
-    no-op; for one with offshore islets we drop the slivers.
+    Kept components: the largest, plus any component whose volume is at
+    least ``keep_above_frac`` × largest's volume. Default 0.5 % cuts the
+    sub-mm³ slivers that show up as boolean noise but preserves real
+    sub-pieces like Argentine Tierra del Fuego (~2,900 mm³ vs main
+    ~93,000 mm³ — well above 0.5 %).
+
+    Bug history (2026-06-30): the function used to return ``max(comps,
+    key=face_count)`` only. For a country whose NE polygon is a real
+    MultiPolygon (Argentina = mainland + Tierra del Fuego + small
+    coastal islets), the dovetail cut produced N components on each
+    half and the keep-largest dropped the smaller-but-legitimate ones.
+    The split + missing geometry was visible at the printed seam.
     """
     comps = mesh.split(only_watertight=False)
     if len(comps) <= 1:
         return mesh
-    return max(comps, key=lambda m: len(m.faces))
+    # Sort by volume desc so we can use the largest's volume as the
+    # threshold reference. Volume catches "real geometric mass" better
+    # than face count (a refined sliver could have many small triangles).
+    sized = sorted(((float(c.volume), c) for c in comps),
+                   key=lambda p: -p[0])
+    largest_vol = sized[0][0]
+    if largest_vol <= 0:
+        # Fallback: degenerate; use face count.
+        return max(comps, key=lambda m: len(m.faces))
+    threshold = keep_above_frac * largest_vol
+    keep = [c for vol, c in sized if vol >= threshold]
+    if len(keep) == 1:
+        return keep[0]
+    return trimesh.util.concatenate(keep)
 
 
 # ---------------------------------------------------------------------------
