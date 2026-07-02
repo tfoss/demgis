@@ -251,39 +251,57 @@ def clip_mesh_to_vector_with_islands(solid, country_geom_mm):
             "Skipping the clip would silently emit a pixelated raster boundary."
         )
 
-    # Union all cutters into single mesh
+    # Multi-cutter path: since cutters come from a disjoint MultiPolygon,
+    # solid ∩ (∪ cutters) = ∪(solid ∩ cutter_i). Compute per-cutter
+    # intersections and concat — avoids the fragile pairwise union chain
+    # (Canada 123-cutter chain produced non-watertight combined cutter).
     if len(cutters) == 1:
-        combined_cutter = cutters[0]
-    else:
-        print(f"    Combining {len(cutters)} cutters...")
-        combined_cutter = cutters[0]
-        for cutter in cutters[1:]:
-            combined_cutter = combined_cutter.union(cutter, engine='manifold')
-
-    print(f"    Combined cutter: {len(combined_cutter.vertices)} verts, {len(combined_cutter.faces)} faces")
-
-    # Verify combined cutter is a volume before intersection
-    if not combined_cutter.is_volume:
-        print(f"    WARNING: Combined cutter is not a volume, attempting repair...")
-        combined_cutter.fill_holes()
-        combined_cutter.update_faces(combined_cutter.unique_faces())
-        trimesh.repair.fix_normals(combined_cutter)
-        if not combined_cutter.is_volume:
+        result = solid.intersection(cutters[0], engine='manifold')
+        if result is None or len(result.faces) == 0:
             raise STLGenerationError(
-                "Vector clip (with islands): combined cutter is not a watertight "
-                "volume even after repair. Skipping the clip would silently emit "
-                "a pixelated raster boundary."
+                "Vector clip (with islands): intersection returned an empty mesh."
             )
+        result = manifold_clean(result)
+        print(f"    Vector clip: {len(solid.faces)} -> {len(result.faces)} faces")
+        return result
 
-    # Let exceptions propagate — silent fallback to the unclipped mesh is the
-    # bug class that produced months of pixelated coastlines (Jan 2026).
-    result = solid.intersection(combined_cutter, engine='manifold')
-    if result is None or len(result.faces) == 0:
+    print(f"    Intersecting solid with {len(cutters)} disjoint cutters...")
+    pieces = []
+    skipped = 0
+    for i, cutter in enumerate(cutters):
+        try:
+            sub = solid.intersection(cutter, engine='manifold')
+            if sub is None or len(sub.faces) == 0:
+                skipped += 1
+                continue
+            sub = manifold_clean(sub)
+            if len(sub.faces) > 0:
+                pieces.append(sub)
+        except Exception as e:
+            print(f"    per-cutter intersect {i} failed: {e}")
+            skipped += 1
+            continue
+    if not pieces:
         raise STLGenerationError(
-            "Vector clip (with islands): intersection returned an empty mesh."
+            "Vector clip (with islands): all per-cutter intersections empty."
         )
+    if len(pieces) == 1:
+        result = pieces[0]
+    else:
+        # Per-piece z-jitter (1μm × index) to prevent Manifold3d vertex-merge
+        # collapse across sub-pieces that share base-plane coordinates.
+        # See clip_mesh_to_vector in make_all_sa_with_vector_clip.py for
+        # the underlying bug analysis. Total offset ≤ 0.1mm for 100 pieces,
+        # below FDM print tolerance.
+        for i, p in enumerate(pieces):
+            if i > 0:
+                p.apply_translation([0, 0, -i * 1e-3])
+        result = trimesh.util.concatenate(pieces)
     result = manifold_clean(result)
-    print(f"    Vector clip: {len(solid.faces)} -> {len(result.faces)} faces")
+    print(
+        f"    Vector clip (per-cutter): kept {len(pieces)}/{len(cutters)} "
+        f"pieces ({skipped} empty), {len(solid.faces)} -> {len(result.faces)} faces"
+    )
     return result
 
 

@@ -883,44 +883,71 @@ def clip_mesh_to_vector(solid, country_geom_mm):
             "Skipping the clip would silently emit a pixelated raster boundary."
         )
 
-    # Union all cutters into single mesh
+    # Multi-cutter path: since cutters come from a valid MultiPolygon they are
+    # geometrically disjoint, so solid ∩ (∪ cutters) = ∪(solid ∩ cutter_i).
+    # Compute the per-cutter intersections and concat. This avoids a fragile
+    # chained union of many cutter meshes via manifold3d — for very large
+    # multipolygons (Canada: 123 cutters) the chain accumulates topology
+    # error and produces a non-watertight combined cutter that then breaks
+    # the final intersection with a manifold_clean failure.
     if len(cutters) == 1:
-        combined_cutter = cutters[0]
         print(
-            f"    Cutter: {len(combined_cutter.vertices)} verts, {len(combined_cutter.faces)} faces, is_volume={combined_cutter.is_volume}"
+            f"    Cutter: {len(cutters[0].vertices)} verts, {len(cutters[0].faces)} faces, is_volume={cutters[0].is_volume}"
         )
-    else:
-        print(f"    Combining {len(cutters)} cutters...")
-        combined_cutter = cutters[0]
-        for cutter in cutters[1:]:
-            combined_cutter = combined_cutter.union(cutter, engine="manifold")
-        print(
-            f"    Combined cutter: {len(combined_cutter.vertices)} verts, {len(combined_cutter.faces)} faces"
-        )
-
-    # Verify combined cutter is a volume before intersection
-    if not combined_cutter.is_volume:
-        print(f"    WARNING: Combined cutter is not a volume, attempting repair...")
-        combined_cutter.fill_holes()
-        combined_cutter.update_faces(combined_cutter.unique_faces())
-        trimesh.repair.fix_normals(combined_cutter)
-        if not combined_cutter.is_volume:
+        result = solid.intersection(cutters[0], engine="manifold")
+        if result is None or len(result.faces) == 0:
             raise STLGenerationError(
-                "Vector clip: combined cutter is not a watertight volume even "
-                "after repair. Skipping the clip would silently emit a pixelated "
-                "raster boundary."
+                "Vector clip: intersection returned an empty mesh. The country "
+                "polygon may not overlap the surface mesh in the expected way."
             )
-
-    # Perform the intersection — let exceptions propagate; a silent fallback
-    # to the unclipped raster mesh is exactly the bug that produced months of
-    # pixelated coastlines (CURRENT_STATE_NOTES.md, Jan 2026).
-    result = solid.intersection(combined_cutter, engine="manifold")
-    if result is None or len(result.faces) == 0:
-        raise STLGenerationError(
-            "Vector clip: intersection returned an empty mesh. The country "
-            "polygon may not overlap the surface mesh in the expected way."
+        result = manifold_clean(result)
+    else:
+        print(f"    Intersecting solid with {len(cutters)} disjoint cutters...")
+        pieces = []
+        skipped = 0
+        for i, cutter in enumerate(cutters):
+            try:
+                sub = solid.intersection(cutter, engine="manifold")
+                if sub is None or len(sub.faces) == 0:
+                    skipped += 1
+                    continue
+                sub = manifold_clean(sub)
+                if len(sub.faces) > 0:
+                    pieces.append(sub)
+            except Exception as e:
+                print(f"    per-cutter intersect {i} failed: {e}")
+                skipped += 1
+                continue
+        if not pieces:
+            raise STLGenerationError(
+                "Vector clip: all per-cutter intersections returned empty. "
+                "The country polygon may not overlap the surface mesh."
+            )
+        if len(pieces) == 1:
+            result = pieces[0]
+        else:
+            # Per-piece unique z-jitter to prevent Manifold3d vertex-merge
+            # collapse. Bug: adjacent sub-pieces share vertex coordinates on
+            # the base plane (all at z=0) which Manifold3d dedups on float32
+            # roundtrip, producing edges shared by 3+ triangles → non-manifold.
+            # Empirically verified on Canada (76 disjoint pieces): raw concat
+            # fails manifold_clean; concat with 1μm z-offset per piece succeeds.
+            # 1μm × 100 pieces = 0.1 mm, still below FDM print tolerance and
+            # invisible on the printed model.
+            for i, p in enumerate(pieces):
+                if i > 0:
+                    p.apply_translation([0, 0, -i * 1e-3])
+            result = trimesh.util.concatenate(pieces)
+        # Final manifold_clean roundtrip normalises the aggregate mesh so
+        # downstream boolean ops (star cut, extrude) get a properly
+        # registered Manifold input rather than a raw concat.
+        result = manifold_clean(result)
+        print(
+            f"    Vector clip (per-cutter): kept {len(pieces)}/{len(cutters)} "
+            f"pieces ({skipped} empty), {len(solid.faces)} -> {len(result.faces)} faces"
         )
-    result = manifold_clean(result)
+        return result
+
     print(f"    Vector clip: {len(solid.faces)} -> {len(result.faces)} faces")
     return result
 
