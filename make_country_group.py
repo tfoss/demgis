@@ -140,7 +140,14 @@ def construct_bridges(
         bridge_poly = LineString([p1, p2]).buffer(width_deg / 2.0, cap_style=2)
         att_a = p1.buffer(width_deg * 0.8)
         att_b = p2.buffer(width_deg * 0.8)
-        bridge_polys.append(bridge_poly)
+        # Return bridge_poly UNIONED with attachment zones so downstream
+        # DEM-marking covers a region that clearly overlaps into both
+        # land polygons. Bridge-strip-only marking leaves the end pixels
+        # at (or barely past) the coast — after rasterisation the marked
+        # component can be a disconnected sliver, breaking mask-component
+        # labelling and leaving the surface mesh split
+        # (Argentina/TdF 2026-07-02).
+        bridge_polys.append(unary_union([bridge_poly, att_a, att_b]))
         per_member_additions[member].extend([bridge_poly, att_a, att_b])
 
     # Union per-member: original islands + all bridges + all attachments

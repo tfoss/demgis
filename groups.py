@@ -479,11 +479,52 @@ MADAGASCAR = CountryGroup(
 )
 
 
+ARGENTINA = CountryGroup(
+    name="Argentina",
+    members=["Argentina"],
+    bridges=[
+        # Mainland Patagonia (sub-poly 0, ~275 deg², extending south to
+        # lat ~-52.4°) ↔ Argentine Tierra del Fuego / Isla Grande
+        # (sub-poly 1, ~2.8 deg², spanning lat -55° to -52.6°). Without
+        # this the Strait of Magellan (~4 km wide at its narrowest) leaves
+        # TdF as a disconnected mesh component in the split output — the
+        # slicer then arranges it as an orphan piece with no dovetail
+        # interface (user report 2026-07-02).
+        # max_distance_km=50: closest points between the simplified
+        # (VECTOR_SIMPLIFY_DEGREES=0.02, ~2 km) polygons measure 34.9 km
+        # (real Strait of Magellan is 4 km — simplification pushed the
+        # coasts apart). 50 km catches the simplified geometry without
+        # allowing a spurious tie to Malvinas (~470 km east) or South
+        # Georgia (~1500 km east).
+        # width_km=50 (vs 25 default): MASK_SMOOTH_SIGMA_PIX=10 erodes a
+        # 25 km strip (~12 px at 2 km/px) below the 0.3 threshold; 50 km
+        # → 25 px wide, retains ~11 px after erosion.
+        Bridge(
+            a_member="Argentina", b_member="Argentina",
+            a_polygon_index=0, b_polygon_index=1,
+            label="Strait of Magellan (Patagonia-TdF)",
+            max_distance_km=50.0,
+            width_km=50.0,
+        ),
+    ],
+    ocean_extensions={
+        "Argentina": [
+            OceanExtension(
+                auto_discover_neighbors=True,
+                max_distance_km=400.0,
+                island_halo_km=25.0,
+            ),
+        ],
+    },
+)
+
+
 # Registry: command-line `--group NAME` looks this up.
 GROUPS: dict[str, CountryGroup] = {
     "UK_Ireland":       UK_IRELAND,
     "Denmark":          DENMARK,
     "Turkey":           TURKEY,
+    "Argentina":        ARGENTINA,
     "Tierra_del_Fuego": TIERRA_DEL_FUEGO,
     "Korea_Japan":      KOREA_JAPAN,
     "Sri_Lanka":        SRI_LANKA,
