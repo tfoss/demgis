@@ -168,9 +168,45 @@ class OceanExtension:
 
 @dataclass
 class CountryGroup:
-    """One printable country-group."""
+    """One printable country-group.
+
+    Two admin levels are supported:
+      * ``admin_level=0`` (default): ``members`` are NE ADMIN names, matched
+        against ``ne_10m_admin_0_countries.shp``.
+      * ``admin_level=1``: ``members`` are ISO 3166-2 codes (e.g. ``US-TX``,
+        ``CH-VS``), matched against ``ne_10m_admin_1_states_provinces.shp``
+        with an additional filter on ``admin == admin_parent``. ISO codes are
+        the stable identifier — ``name_en`` volatility across NE releases has
+        bitten us at admin0 (see feedback_ne_admin_names.md) and is worse at
+        admin1 (diacritics, English vs local names).
+    """
     name: str                                # used for output dir + qc subject
-    members: list[str]                       # NE ADMIN names; order = render order
+    members: list[str]                       # NE ADMIN names (level 0) or ISO 3166-2 (level 1); order = render order
+    # Admin level: 0 = country (default), 1 = state/province/canton.
+    admin_level: int = 0
+    # Required when admin_level == 1: parent country name matching the NE
+    # admin1 layer's ``admin`` column (e.g. "United States of America").
+    admin_parent: Optional[str] = None
+    # Per-group scale/resolution/simplify overrides. When None, the driver
+    # leaves the pipeline module's canonical values (GLOBAL_XY_SCALE=0.80,
+    # XY_MM_PER_PIXEL=0.25, VECTOR_SIMPLIFY_DEGREES=0.02, MASK_SMOOTH_SIGMA_PIX=10)
+    # in place. Sub-national groups typically want a larger XY scale so a
+    # single state (Texas in the pilot) fills the print bed.
+    xy_scale_override: Optional[float] = None
+    xy_mm_per_pixel_override: Optional[float] = None
+    vector_simplify_degrees_override: Optional[float] = None
+    mask_smooth_sigma_pix_override: Optional[float] = None
+    # Path to a per-group DEM (e.g. conus_500m_eqearth.tif). When None the
+    # driver uses whatever DEM was passed via the --dem CLI flag. Must be in
+    # the same Equal Earth projection as ``world_2km_eqearth.tif`` so
+    # neighbor-fit boundaries agree across DEMs.
+    dem_path_override: Optional[str] = None
+    # Capital-star source. ``national`` (default) uses pipe.CAPITALS keyed by
+    # country name — the historical behavior. ``admin1_capital`` looks up
+    # state/province capitals from ne_10m_populated_places.shp, filtered by
+    # (ADM0NAME==admin_parent, FEATURECLA=='Admin-1 capital', ADM1NAME=name_en
+    # from the selected admin1 row). ``none`` skips the star entirely.
+    capital_strategy: str = "national"
     bridges: list[Bridge] = field(default_factory=list)
     shared_origin: Optional[SharedOrigin] = None
     # Members whose DEM coverage we deliberately accept as partial (overseas
@@ -224,6 +260,14 @@ class CountryGroup:
     # Bead 13 — per-member force-disable for the back label. True =
     # skip recessing text into the back of this member's STLs.
     disable_back_label: dict[str, bool] = field(default_factory=dict)
+    # Per-member override of the FIRST dovetail cut position as a fraction
+    # of the mesh's cut-axis extent (0.0 = min edge, 1.0 = max edge). Only
+    # applied to the first split; recursive sub-splits still use midpoint.
+    # Default midpoint is a reasonable heuristic but can slice through a
+    # jagged coastline and leave the slot piece fragmented (Argentina
+    # midpoint cut at lat ~-38° isolates the Bahía Blanca peninsula
+    # region). Use this to shift the cut to a smoother cross-section.
+    dovetail_cut_frac: dict[str, float] = field(default_factory=dict)
     notes: str = ""
 
 
@@ -516,6 +560,14 @@ ARGENTINA = CountryGroup(
             ),
         ],
     },
+    # Default midpoint cut lands at mesh Y ≈ 232 mm pre-scale ≈ lat -38°,
+    # which slices through the Bahía Blanca / Río Colorado coastal
+    # jaggedness — the dovetail's slot piece then isolates a small
+    # peninsula fragment (c2 = 1772 faces in the 2026-07-02 run).
+    # Shift to 0.4 (Y ≈ 185 mm ≈ lat -35°), where the country is wider
+    # and the coastline is straighter, so the cut passes through a
+    # clean slab.
+    dovetail_cut_frac={"Argentina": 0.4},
 )
 
 

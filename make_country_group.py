@@ -626,8 +626,12 @@ def split_member_stl(
             return pieces_out
         # Needs dovetail. Run it on the full mesh.
         print(f"    {member}: full mesh needs dovetail split.")
+        cut_frac = group.dovetail_cut_frac.get(member)
+        if cut_frac is not None:
+            print(f"    using dovetail_cut_frac={cut_frac} (group override)")
         dpieces = csplit.dovetail_split_to_fit(
             mesh, bed_mm=bed_mm, prime_tower_mm=prime_tower_mm,
+            first_cut_frac=cut_frac,
         )
         member_safe2 = member.replace(" ", "_")
         out_pieces2: list[dict] = []
@@ -732,8 +736,12 @@ def split_member_stl(
         if csplit.needs_dovetail_split(comp.mesh, bed_mm, prime_tower_mm):
             print(f"    {comp.label}: needs dovetail split "
                   f"(extents={comp.mesh.extents.tolist()})")
+            cut_frac = group.dovetail_cut_frac.get(member)
+            if cut_frac is not None:
+                print(f"      using dovetail_cut_frac={cut_frac} (group override)")
             dpieces = csplit.dovetail_split_to_fit(
                 comp.mesh, bed_mm=bed_mm, prime_tower_mm=prime_tower_mm,
+                first_cut_frac=cut_frac,
             )
             for dp in dpieces:
                 piece_label = (f"{comp.label}_{dp.suffix}"

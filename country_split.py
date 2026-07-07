@@ -768,6 +768,7 @@ def dovetail_split_to_fit(
     keep_largest_per_cut: bool = True,
     label_prefix: str = "",
     rezero_pieces: bool = True,
+    first_cut_frac: Optional[float] = None,
 ) -> list[DovetailPiece]:
     """Recursively bisect ``mesh`` along its MRR-long-axis midpoint until
     every output piece fits the usable area ``(bed - prime_tower) × bed``.
@@ -798,9 +799,17 @@ def dovetail_split_to_fit(
         ex = m.extents
         cut_axis = "x" if ex[0] >= ex[1] else "y"
         s_lo, s_hi = suffix_pairs[cut_axis]
+        # Apply first_cut_frac only at depth 0. Nested splits keep midpoint.
+        cut_coord = None
+        if depth == 0 and first_cut_frac is not None:
+            axis_idx = 0 if cut_axis == "x" else 1
+            lo = float(m.bounds[0, axis_idx])
+            hi = float(m.bounds[1, axis_idx])
+            cut_coord = lo + first_cut_frac * (hi - lo)
         tab_piece, slot_piece, info = split_with_dovetail(
             m,
             cut_axis=cut_axis,
+            cut_coord=cut_coord,
             flare_ratio=flare_ratio,
             min_shoulder_mm=min_shoulder_mm,
             clearance_mm=clearance_mm,
