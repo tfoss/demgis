@@ -71,6 +71,18 @@ class Bridge:
     height_mm: float = 1.5
     max_distance_km: float = 60.0
     label: str = ""                          # display label only
+    # Attachment-zone radius multiplier: attachment radius (degrees) =
+    # width_km/111 × attachment_factor. Default 0.8. Increase to reach
+    # deeper into the target land polygons (Argentina's TdF bridge needs
+    # ~1.5 to cover Bahía San Sebastián just south of Cabo Espíritu Santo).
+    attachment_factor: float = 0.8
+    # Countries whose land polygon (from NE) should be subtracted from the
+    # bridge polygon + attachment zones. Prevents the bridge from cutting
+    # into neighbouring territory (Argentina's Patagonia→TdF bridge is
+    # ~30 km east of the Chile-Argentine border; a 50 km-wide strip
+    # unclipped extends into Chilean coast + Isla Isabel, breaking Chile's
+    # own STL fit). Names must match NE ADMIN column verbatim.
+    exclude_countries: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -543,12 +555,22 @@ ARGENTINA = CountryGroup(
         # width_km=50 (vs 25 default): MASK_SMOOTH_SIGMA_PIX=10 erodes a
         # 25 km strip (~12 px at 2 km/px) below the 0.3 threshold; 50 km
         # → 25 px wide, retains ~11 px after erosion.
+        # exclude_countries=["Chile"]: the strait's western half is
+        # Chilean; without this clip Argentina's bridge cut into
+        # Chile's coast + Isla Isabel, showing up as Argentina-coloured
+        # mesh over Chilean territory (user report 2026-07-08).
+        # attachment_factor=1.5 (vs 0.8 default): reach past Bahía San
+        # Sebastián (~50 km south of Cabo Espíritu Santo) so the mesh
+        # connects to TdF's main body, not just to a thin coastal strip
+        # that Gaussian smoothing then erodes away.
         Bridge(
             a_member="Argentina", b_member="Argentina",
             a_polygon_index=0, b_polygon_index=1,
             label="Strait of Magellan (Patagonia-TdF)",
             max_distance_km=50.0,
             width_km=50.0,
+            attachment_factor=1.5,
+            exclude_countries=["Chile"],
         ),
     ],
     ocean_extensions={
@@ -593,6 +615,19 @@ GROUPS: dict[str, CountryGroup] = {
     ),
     "Germany":          CountryGroup(name="Germany", members=["Germany"]),
     "Tajikistan":       CountryGroup(name="Tajikistan", members=["Tajikistan"]),
+    # Admin1 pilot: Texas + immediate neighbors. xy_scale_override=0.28 puts
+    # Texas at ~157 x 157 mm OBB on a 160 x 220 mm usable bed (7.1 km/mm
+    # print scale). ISO-3166-2 codes are the stable identifier at admin1;
+    # name_en collides / drifts across NE releases.
+    "USA_Texas_Neighbors": CountryGroup(
+        name="USA_Texas_Neighbors",
+        admin_level=1,
+        admin_parent="United States of America",
+        members=["US-TX", "US-NM", "US-OK", "US-AR", "US-LA"],
+        xy_scale_override=0.28,
+        dem_path_override="conus_500m_eqearth.tif",
+        capital_strategy="admin1_capital",
+    ),
 }
 
 

@@ -77,10 +77,15 @@ def sorted_sub_polygons(geom) -> list[Polygon]:
 def construct_bridges(
     member_geoms_wgs84: dict[str, "shapely.geometry.base.BaseGeometry"],
     bridges: list[Bridge],
+    ne_gdf: Optional[gpd.GeoDataFrame] = None,
 ) -> tuple[dict[str, "shapely.geometry.base.BaseGeometry"], list[Polygon]]:
     """Apply each Bridge config: compute nearest_points between specified
     sub-polygons, buffer to bridge polygon + attachment zones, union into
     the appropriate member's geom.
+
+    ``ne_gdf`` is required if any bridge sets ``exclude_countries``; those
+    countries' NE polygons are subtracted from the bridge geometry so the
+    strip doesn't cut into neighbouring territory.
 
     Returns (member_geoms_with_bridges, all_bridge_polys_wgs84).
 
@@ -138,8 +143,40 @@ def construct_bridges(
 
         width_deg = bridge.width_km / 111.0
         bridge_poly = LineString([p1, p2]).buffer(width_deg / 2.0, cap_style=2)
-        att_a = p1.buffer(width_deg * 0.8)
-        att_b = p2.buffer(width_deg * 0.8)
+        att_a = p1.buffer(width_deg * bridge.attachment_factor)
+        att_b = p2.buffer(width_deg * bridge.attachment_factor)
+
+        # Clip the bridge region against exclude_countries land polygons
+        # so the strip doesn't cut into neighbouring territory. Applied
+        # to both the DEM-marking polygon AND the country-merge polygons —
+        # otherwise the excluded country's land would end up inside this
+        # member's clip footprint and show as this member on the print
+        # (Argentina/Chile 2026-07-08).
+        if bridge.exclude_countries:
+            if ne_gdf is None:
+                raise ValueError(
+                    f"{member} bridge {bridge.label or ''}: "
+                    "exclude_countries requires ne_gdf argument"
+                )
+            excluded_polys = []
+            for exc in bridge.exclude_countries:
+                exc_rows = ne_gdf[ne_gdf["ADMIN"] == exc]
+                if exc_rows.empty:
+                    raise ValueError(
+                        f"{member} bridge {bridge.label or ''}: "
+                        f"exclude_countries name {exc!r} not found in NE"
+                    )
+                exc_geom = unary_union(exc_rows.geometry)
+                # Small buffer (~2 km) so we clip cleanly past the coast
+                # rather than sitting exactly at it — rasterisation would
+                # still catch single-pixel overlaps otherwise.
+                excluded_polys.append(exc_geom.buffer(0.02))
+            excluded_union = unary_union(excluded_polys)
+            bridge_poly = bridge_poly.difference(excluded_union)
+            att_a = att_a.difference(excluded_union)
+            att_b = att_b.difference(excluded_union)
+            print(f"    clipped bridge against {bridge.exclude_countries}")
+
         # Return bridge_poly UNIONED with attachment zones so downstream
         # DEM-marking covers a region that clearly overlaps into both
         # land polygons. Bridge-strip-only marking leaves the end pixels
@@ -1291,7 +1328,7 @@ def main():
     if group.bridges:
         print(f"\nConstructing {len(group.bridges)} bridge(s)...")
         member_wgs84, bridge_polys_wgs84 = construct_bridges(
-            member_wgs84, group.bridges
+            member_wgs84, group.bridges, ne_gdf=ne,
         )
 
     # 3. Reproject everything to DEM CRS
